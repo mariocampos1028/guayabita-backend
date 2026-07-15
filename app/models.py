@@ -70,6 +70,14 @@ class UserResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LeaderboardEntry(BaseModel):
+    id: int
+    username: str
+    balance: float
+
+    model_config = {"from_attributes": True}
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

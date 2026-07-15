@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.dependencies import get_current_user
 from app.db.models_db import User
-from app.models import RegisterRequest, LoginRequest, TokenResponse, UserResponse, SessionResponse
+from app.models import RegisterRequest, LoginRequest, TokenResponse, UserResponse, SessionResponse, LeaderboardEntry
 from app.services import auth_service
 from app.services import room_service
 
@@ -45,6 +45,17 @@ def logout(request: Request, current_user: User = Depends(get_current_user)):
 @router.get("/me", response_model=UserResponse)
 def me(current_user: User = Depends(get_current_user)):
     return UserResponse.model_validate(current_user)
+
+
+@router.get("/leaderboard", response_model=list[LeaderboardEntry])
+def leaderboard(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Devuelve, como máximo, los 50 jugadores con mayor saldo."""
+    _ = current_user
+    users = db.query(User).order_by(User.balance.desc(), User.id.asc()).limit(50).all()
+    return [LeaderboardEntry.model_validate(user) for user in users]
 
 
 @router.get("/session", response_model=SessionResponse)
