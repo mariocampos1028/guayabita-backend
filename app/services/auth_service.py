@@ -14,6 +14,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "changeme")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS", "7"))
 INITIAL_BALANCE = float(os.getenv("INITIAL_BALANCE", "5000"))
+DEFAULT_AVATAR_URL = os.getenv("DEFAULT_AVATAR_URL", "/images/avatar-default.png")
 LOBBY_SESSION_TTL = 60 * 3  # 3 minutos de inactividad en el lobby
 
 EMAIL_VERIFY_PREFIX = "email_verify:"
@@ -96,7 +97,18 @@ def check_lobby_session(token: str) -> bool:
 
 # ── Usuarios ───────────────────────────────────────────────────────────────────
 
-def register_user(db: Session, username: str, email: str, password: str) -> User:
+def register_user(
+    db: Session,
+    username: str,
+    email: str,
+    password: str,
+    *,
+    first_name: str,
+    last_name: str,
+    phone: str,
+    address: str,
+    birth_date,
+) -> User:
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=400, detail="El nombre de usuario ya existe")
     if db.query(User).filter(User.email == email).first():
@@ -107,6 +119,12 @@ def register_user(db: Session, username: str, email: str, password: str) -> User
         email=email,
         password_hash=hash_password(password),
         balance=INITIAL_BALANCE,
+        first_name=first_name,
+        last_name=last_name,
+        phone=phone,
+        address=address,
+        birth_date=birth_date,
+        avatar_url=DEFAULT_AVATAR_URL,
     )
     db.add(user)
     db.commit()
@@ -228,4 +246,33 @@ def reset_password_with_token(db: Session, token: str, new_password: str) -> Use
     db.commit()
     db.refresh(user)
     redis.delete(key)
+    return user
+
+
+def update_user_profile(
+    db: Session,
+    user_id: int,
+    *,
+    first_name: str,
+    last_name: str,
+    phone: str,
+    address: str,
+) -> User:
+    user = get_user_by_id(db, user_id)
+    user.first_name = first_name
+    user.last_name = last_name
+    user.phone = phone
+    user.address = address
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def change_password(db: Session, user_id: int, current_password: str, new_password: str) -> User:
+    user = get_user_by_id(db, user_id)
+    if not verify_password(current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="La contraseña actual es incorrecta")
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    db.refresh(user)
     return user

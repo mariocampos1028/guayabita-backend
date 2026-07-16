@@ -14,6 +14,8 @@ from app.models import (
     MessageResponse,
     ForgotPasswordRequest,
     ResetPasswordRequest,
+    UpdateProfileRequest,
+    ChangePasswordRequest,
 )
 from app.services import auth_service
 from app.services import room_service
@@ -117,7 +119,17 @@ def register(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    user = auth_service.register_user(db, req.username, req.email, req.password)
+    user = auth_service.register_user(
+        db,
+        req.username,
+        req.email,
+        req.password,
+        first_name=req.first_name,
+        last_name=req.last_name,
+        phone=req.phone,
+        address=req.address,
+        birth_date=req.birth_date,
+    )
     token = auth_service.create_token(user.id)
     auth_service.create_lobby_session(token, user.id)
     verify_token = auth_service.create_email_verification_token(user.id)
@@ -171,6 +183,33 @@ def logout(request: Request, current_user: User = Depends(get_current_user)):
 @router.get("/me", response_model=UserResponse)
 def me(current_user: User = Depends(get_current_user)):
     return UserResponse.model_validate(current_user)
+
+
+@router.patch("/profile", response_model=UserResponse)
+def update_profile(
+    req: UpdateProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user = auth_service.update_user_profile(
+        db,
+        current_user.id,
+        first_name=req.first_name,
+        last_name=req.last_name,
+        phone=req.phone,
+        address=req.address,
+    )
+    return UserResponse.model_validate(user)
+
+
+@router.post("/change-password", response_model=MessageResponse)
+def change_password(
+    req: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    auth_service.change_password(db, current_user.id, req.current_password, req.new_password)
+    return MessageResponse(message="Contraseña actualizada correctamente")
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])

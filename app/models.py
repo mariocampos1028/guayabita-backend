@@ -1,5 +1,6 @@
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, EmailStr
+from datetime import date
+from pydantic import BaseModel, Field, EmailStr, field_validator
 
 
 TurnPhase = Literal["first-roll", "betting", "second-roll", "result"]
@@ -54,6 +55,32 @@ class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
     password: str = Field(..., min_length=6, max_length=100)
+    first_name: str = Field(..., min_length=1, max_length=80)
+    last_name: str = Field(..., min_length=1, max_length=80)
+    phone: str = Field(..., min_length=7, max_length=30)
+    address: str = Field(..., min_length=5, max_length=255)
+    birth_date: date
+
+    @field_validator("birth_date")
+    @classmethod
+    def must_be_adult(cls, value: date) -> date:
+        today = date.today()
+        age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+        if age < 18:
+            raise ValueError("Debes ser mayor de 18 años para registrarte")
+        return value
+
+
+class UpdateProfileRequest(BaseModel):
+    first_name: str = Field(..., min_length=1, max_length=80)
+    last_name: str = Field(..., min_length=1, max_length=80)
+    phone: str = Field(..., min_length=7, max_length=30)
+    address: str = Field(..., min_length=5, max_length=255)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=6, max_length=100)
+    new_password: str = Field(..., min_length=6, max_length=100)
 
 
 class LoginRequest(BaseModel):
@@ -67,6 +94,12 @@ class UserResponse(BaseModel):
     email: str
     balance: float
     email_verified: bool
+    first_name: str
+    last_name: str
+    phone: str
+    address: str
+    birth_date: date | None
+    avatar_url: str | None
 
     model_config = {"from_attributes": True}
 

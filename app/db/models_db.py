@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from sqlalchemy import Integer, String, Float, DateTime, Text, ForeignKey, Boolean
+from datetime import datetime, timezone, date
+from sqlalchemy import Integer, String, Float, DateTime, Text, ForeignKey, Boolean, Date
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.database import Base
 
@@ -11,6 +11,12 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_name: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    last_name: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    phone: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    address: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     balance: Mapped[float] = mapped_column(Float, default=5000.0, nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_verified_at: Mapped[datetime | None] = mapped_column(
