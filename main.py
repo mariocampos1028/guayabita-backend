@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from app.db.database import engine
 from app.db import models_db  # noqa: F401 — necesario para que Base conozca los modelos
 from app.db.database import Base
+from app.db.migrations import run_startup_migrations
 from app.routers.auth import router as auth_router
 from app.routers.rooms import router as rooms_router
 from app.routers.game import router as game_router
@@ -14,6 +15,7 @@ load_dotenv()
 
 # Crea las tablas en PostgreSQL si no existen
 Base.metadata.create_all(bind=engine)
+run_startup_migrations()
 
 app = FastAPI(title="Guayabita API", version="2.0.0")
 

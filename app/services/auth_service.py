@@ -1,10 +1,12 @@
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.db.models_db import User
+from app.emails.settings import email_settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -12,7 +14,17 @@ JWT_SECRET = os.getenv("JWT_SECRET", "changeme")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS", "7"))
 INITIAL_BALANCE = float(os.getenv("INITIAL_BALANCE", "5000"))
-LOBBY_SESSION_TTL = 60 * 1  # 2 minutos de inactividad en el lobby
+LOBBY_SESSION_TTL = 60 * 3  # 3 minutos de inactividad en el lobby
+
+EMAIL_VERIFY_PREFIX = "email_verify:"
+PASSWORD_RESET_PREFIX = "password_reset:"
+PASSWORD_RESET_RATE_PREFIX = "pwd_reset_rate:"
+PASSWORD_RESET_RATE_MAX = 3
+PASSWORD_RESET_RATE_WINDOW = 15 * 60  # 15 minutos
+
+FORGOT_PASSWORD_MESSAGE = (
+    "Si el correo está registrado, enviamos instrucciones para restablecer tu contraseña."
+)
 
 
 def _get_redis():
@@ -123,4 +135,97 @@ def update_user_balance(db: Session, user_id: int, delta: float) -> User:
     user.balance += delta
     db.commit()
     db.refresh(user)
+    return user
+
+
+# ── Verificación de correo ─────────────────────────────────────────────────────
+
+def _email_verify_key(token: str) -> str:
+    return f"{EMAIL_VERIFY_PREFIX}{token}"
+
+
+def create_email_verification_token(user_id: int) -> str:
+    """Genera un token de un solo uso y lo guarda en Redis."""
+    token = secrets.token_urlsafe(32)
+    ttl_seconds = email_settings.verify_token_ttl_hours * 3600
+    _get_redis().set(_email_verify_key(token), str(user_id), ex=ttl_seconds)
+    return token
+
+
+def verify_email_with_token(db: Session, token: str) -> User:
+    """Valida el token, marca el correo como verificado y lo invalida."""
+    redis = _get_redis()
+    key = _email_verify_key(token)
+    user_id_str = redis.get(key)
+    if user_id_str is None:
+        raise HTTPException(status_code=400, detail="Enlace inválido o expirado")
+
+    user = get_user_by_id(db, int(user_id_str))
+    if not user.email_verified:
+        user.email_verified = True
+        user.email_verified_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(user)
+
+    redis.delete(key)
+    return user
+
+
+def issue_verification_token_for_user(db: Session, user_id: int) -> str:
+    """Devuelve un token nuevo para reenviar verificación."""
+    user = get_user_by_id(db, user_id)
+    if user.email_verified:
+        raise HTTPException(status_code=400, detail="El correo ya está verificado")
+    return create_email_verification_token(user.id)
+
+
+# ── Restablecimiento de contraseña ─────────────────────────────────────────────
+
+def _password_reset_key(token: str) -> str:
+    return f"{PASSWORD_RESET_PREFIX}{token}"
+
+
+def _password_reset_rate_key(email: str) -> str:
+    return f"{PASSWORD_RESET_RATE_PREFIX}{email.strip().lower()}"
+
+
+def check_password_reset_rate_limit(email: str) -> None:
+    """Limita solicitudes de reset por correo para evitar abuso."""
+    redis = _get_redis()
+    key = _password_reset_rate_key(email)
+    count = redis.get(key)
+    if count is not None and int(count) >= PASSWORD_RESET_RATE_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
+        )
+    new_count = int(count) + 1 if count is not None else 1
+    redis.set(key, str(new_count), ex=PASSWORD_RESET_RATE_WINDOW)
+
+
+def get_user_by_email(db: Session, email: str) -> User | None:
+    return db.query(User).filter(User.email == email).first()
+
+
+def create_password_reset_token(user_id: int) -> str:
+    """Genera un token de un solo uso para restablecer contraseña."""
+    token = secrets.token_urlsafe(32)
+    ttl_seconds = email_settings.password_reset_token_ttl_minutes * 60
+    _get_redis().set(_password_reset_key(token), str(user_id), ex=ttl_seconds)
+    return token
+
+
+def reset_password_with_token(db: Session, token: str, new_password: str) -> User:
+    """Valida el token, actualiza la contraseña y lo invalida."""
+    redis = _get_redis()
+    key = _password_reset_key(token)
+    user_id_str = redis.get(key)
+    if user_id_str is None:
+        raise HTTPException(status_code=400, detail="Enlace inválido o expirado")
+
+    user = get_user_by_id(db, int(user_id_str))
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    db.refresh(user)
+    redis.delete(key)
     return user

@@ -214,3 +214,48 @@ def get_player_user_id(code: str, player_index: int) -> int | None:
     if player_index < len(ids):
         return ids[player_index]
     return None
+
+
+def list_waiting_rooms(current_user_id: int) -> list[dict]:
+    """Lista salas en espera a las que el usuario aún no pertenece."""
+    open_rooms: list[dict] = []
+    try:
+        keys = redis.keys("room:*")
+    except Exception:
+        return []
+
+    if not keys:
+        return []
+
+    for key in keys:
+        code = key.split(":", 1)[-1]
+        raw = redis.get(_room_key(code))
+        if not raw:
+            continue
+
+        room = json.loads(raw)
+        if room.get("status") != "waiting":
+            continue
+        if len(room["players"]) >= 10:
+            continue
+        if any(p["user_id"] == current_user_id for p in room["players"]):
+            continue
+
+        creator_username = "Desconocido"
+        for player in room["players"]:
+            if player["user_id"] == room["creator_id"]:
+                creator_username = player["username"]
+                break
+
+        open_rooms.append(
+            {
+                "code": room["code"],
+                "creator_username": creator_username,
+                "case_value": room["case_value"],
+                "player_count": len(room["players"]),
+                "max_players": 10,
+            }
+        )
+
+    open_rooms.sort(key=lambda item: (-item["player_count"], item["code"]))
+    return open_rooms

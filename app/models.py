@@ -66,8 +66,26 @@ class UserResponse(BaseModel):
     username: str
     email: str
     balance: float
+    email_verified: bool
 
     model_config = {"from_attributes": True}
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=200)
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=200)
+    new_password: str = Field(..., min_length=6, max_length=100)
 
 
 class LeaderboardEntry(BaseModel):
@@ -108,3 +126,11 @@ class RoomResponse(BaseModel):
     status: str
     players: list[RoomPlayer]
     game_state: Optional[GameState] = None
+
+
+class RoomSummary(BaseModel):
+    code: str
+    creator_username: str
+    case_value: float
+    player_count: int
+    max_players: int = 10

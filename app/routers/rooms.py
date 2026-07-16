@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db.models_db import User
 from app.dependencies import get_current_user
-from app.models import CreateRoomRequest, RoomResponse, GameState
+from app.models import CreateRoomRequest, RoomResponse, RoomSummary, GameState
 from app.services import room_service, auth_service
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
@@ -54,6 +54,13 @@ def join_room(
         )
     room = room_service.join_room(code.upper(), current_user.id, current_user.username)
     return _format_room(room)
+
+
+@router.get("/open", response_model=list[RoomSummary])
+def list_open_rooms(current_user: User = Depends(get_current_user)):
+    """Salas en espera disponibles para unirse sin conocer el código."""
+    rooms = room_service.list_waiting_rooms(current_user.id)
+    return [RoomSummary.model_validate(room) for room in rooms]
 
 
 @router.get("/{code}", response_model=RoomResponse)
