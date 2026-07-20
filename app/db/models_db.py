@@ -17,6 +17,7 @@ class User(Base):
     address: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     balance: Mapped[float] = mapped_column(Float, default=5000.0, nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_verified_at: Mapped[datetime | None] = mapped_column(
@@ -46,3 +47,37 @@ class GameHistory(Base):
     )
 
     winner = relationship("User", back_populates="game_histories", foreign_keys=[winner_id])
+
+
+class Tournament(Base):
+    __tablename__ = "tournaments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False, default="Premio del torneo")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    winner_user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    winner_username: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    winner_avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    winner_balance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    winner_prize_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+
+    winner = relationship("User", foreign_keys=[winner_user_id])
+    created_by = relationship("User", foreign_keys=[created_by_id])

@@ -16,3 +16,6 @@ python-multipart==0.0.20
 # Email (Resend)
 resend==2.7.0
 jinja2==3.1.6
+# Almacenamiento (Cloudflare R2)
+boto3==1.38.23
+Pillow==11.2.1

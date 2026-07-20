@@ -1,5 +1,5 @@
 from typing import Literal, Optional
-from datetime import date
+from datetime import date, datetime
 from pydantic import BaseModel, Field, EmailStr, field_validator
 
 
@@ -100,6 +100,7 @@ class UserResponse(BaseModel):
     address: str
     birth_date: date | None
     avatar_url: str | None
+    is_admin: bool
 
     model_config = {"from_attributes": True}
 
@@ -127,6 +128,40 @@ class LeaderboardEntry(BaseModel):
     balance: float
 
     model_config = {"from_attributes": True}
+
+
+# ── Torneos ────────────────────────────────────────────────────────────────────
+
+TournamentStatus = Literal["draft", "active", "finished"]
+
+
+class TournamentResponse(BaseModel):
+    id: int
+    title: str
+    description: str
+    image_url: str | None
+    status: TournamentStatus
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    ends_at: datetime | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    winner_user_id: int | None
+    winner_username: str | None
+    winner_avatar_url: str | None
+    winner_balance: float | None
+    winner_prize_title: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class TournamentUpdateRequest(BaseModel):
+    tournament_id: int | None = None
+    title: str = Field(..., min_length=1, max_length=120)
+    description: str = Field(..., min_length=1, max_length=2000)
+    ends_at: datetime | None = None
+    is_active: bool
 
 
 class TokenResponse(BaseModel):

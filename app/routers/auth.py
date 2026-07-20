@@ -1,4 +1,5 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, HTTPException, UploadFile, File
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.dependencies import get_current_user
@@ -19,6 +20,7 @@ from app.models import (
 )
 from app.services import auth_service
 from app.services import room_service
+from app.services.avatar_service import upload_user_avatar, delete_user_avatar, get_user_avatar_bytes
 from app.emails import (
     send_password_changed_email,
     send_reset_password_email,
@@ -210,6 +212,43 @@ def change_password(
 ):
     auth_service.change_password(db, current_user.id, req.current_password, req.new_password)
     return MessageResponse(message="Contraseña actualizada correctamente")
+
+
+@router.post("/avatar", response_model=UserResponse)
+def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Sube o reemplaza la foto de perfil del usuario autenticado."""
+    public_url = upload_user_avatar(current_user.id, file)
+    user = auth_service.update_user_avatar_url(db, current_user.id, public_url)
+    return UserResponse.model_validate(user)
+
+
+@router.delete("/avatar", response_model=UserResponse)
+def remove_avatar(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Elimina la foto de perfil en R2 y restaura el avatar por defecto."""
+    delete_user_avatar(current_user.id)
+    user = auth_service.reset_user_avatar_to_default(db, current_user.id)
+    return UserResponse.model_validate(user)
+
+
+@router.get("/avatar/{user_id}/image")
+def get_avatar_image(user_id: int):
+    """Proxy de imagen cuando R2_PUBLIC_URL no está configurada.
+
+    También funciona como respaldo si el bucket no tiene acceso público.
+    """
+    data, content_type = get_user_avatar_bytes(user_id)
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])

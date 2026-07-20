@@ -276,3 +276,19 @@ def change_password(db: Session, user_id: int, current_password: str, new_passwo
     db.commit()
     db.refresh(user)
     return user
+
+
+def update_user_avatar_url(db: Session, user_id: int, avatar_url: str) -> User:
+    user = get_user_by_id(db, user_id)
+    user.avatar_url = avatar_url
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def reset_user_avatar_to_default(db: Session, user_id: int) -> User:
+    user = get_user_by_id(db, user_id)
+    user.avatar_url = DEFAULT_AVATAR_URL
+    db.commit()
+    db.refresh(user)
+    return user
