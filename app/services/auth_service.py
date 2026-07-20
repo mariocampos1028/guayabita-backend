@@ -125,6 +125,7 @@ def register_user(
         address=address,
         birth_date=birth_date,
         avatar_url=DEFAULT_AVATAR_URL,
+        last_login_at=datetime.now(timezone.utc),
     )
     db.add(user)
     db.commit()
@@ -136,6 +137,9 @@ def login_user(db: Session, username: str, password: str) -> tuple[User, str]:
     user = db.query(User).filter(User.username == username).first()
     if not user or not verify_password(password, user.password_hash):
         raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+    user.last_login_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
     token = create_token(user.id)
     return user, token
 

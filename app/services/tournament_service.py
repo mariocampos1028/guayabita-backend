@@ -58,7 +58,21 @@ def get_latest_finished_tournament(db: Session) -> Tournament | None:
 
 
 def get_leaderboard_winner(db: Session) -> User | None:
-    return db.query(User).order_by(User.balance.desc(), User.id.asc()).first()
+    return (
+        db.query(User)
+        .filter(User.is_admin == False, User.tournament_balance > 0)
+        .order_by(User.tournament_balance.desc(), User.id.asc())
+        .first()
+    )
+
+
+def _refund_loser_tournament_balances(db: Session, winner_id: int | None) -> None:
+    query = db.query(User).filter(User.tournament_balance > 0)
+    if winner_id is not None:
+        query = query.filter(User.id != winner_id)
+    for user in query.all():
+        user.balance += user.tournament_balance
+        user.tournament_balance = 0.0
 
 
 def finalize_tournament(db: Session, tournament: Tournament) -> Tournament:
@@ -68,12 +82,17 @@ def finalize_tournament(db: Session, tournament: Tournament) -> Tournament:
     tournament.finished_at = _now()
     tournament.updated_at = _now()
 
+    winner_id = None
     if winner:
+        winner_id = winner.id
         tournament.winner_user_id = winner.id
         tournament.winner_username = winner.username
         tournament.winner_avatar_url = winner.avatar_url
-        tournament.winner_balance = winner.balance
+        tournament.winner_balance = winner.tournament_balance
         tournament.winner_prize_title = tournament.title
+        winner.tournament_balance = 0.0
+
+    _refund_loser_tournament_balances(db, winner_id)
 
     db.commit()
     db.refresh(tournament)
@@ -95,6 +114,45 @@ def get_other_active_tournament(db: Session, exclude_id: int) -> Tournament | No
         .filter(Tournament.status == "active", Tournament.id != exclude_id)
         .first()
     )
+
+
+def list_all_tournaments(db: Session) -> list[Tournament]:
+    return db.query(Tournament).order_by(Tournament.id.desc()).all()
+
+
+def get_tournament_by_id(db: Session, tournament_id: int) -> Tournament:
+    tournament = db.query(Tournament).filter(Tournament.id == tournament_id).first()
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Torneo no encontrado")
+    return tournament
+
+
+def create_new_draft(db: Session, admin_id: int) -> Tournament:
+    active = get_active_tournament(db)
+    if active:
+        active = maybe_finalize_tournament(db, active)
+        if active.status == "active":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Ya hay un torneo activo. Espera a que finalice "
+                    "antes de crear uno nuevo."
+                ),
+            )
+
+    finished = get_latest_finished_tournament(db)
+    tournament = Tournament(
+        title=finished.title if finished else DEFAULT_TITLE,
+        description=finished.description if finished else DEFAULT_DESCRIPTION,
+        image_url=(finished.image_url if finished else None) or DEFAULT_PRIZE_IMAGE,
+        status="draft",
+        is_active=False,
+        created_by_id=admin_id,
+    )
+    db.add(tournament)
+    db.commit()
+    db.refresh(tournament)
+    return tournament
 
 
 def get_or_create_editable_tournament(db: Session, admin_id: int) -> Tournament:
@@ -140,7 +198,16 @@ def get_tournament_for_save(
         if tournament.status == "finished":
             raise HTTPException(status_code=400, detail="No se puede editar un torneo finalizado")
         return tournament
-    return get_or_create_editable_tournament(db, admin_id)
+    raise HTTPException(status_code=400, detail="Debes guardar el torneo con todos los datos requeridos")
+
+
+def _validate_tournament_fields(title: str, description: str, ends_at: datetime | None) -> None:
+    if not title or not title.strip():
+        raise HTTPException(status_code=400, detail="El título es obligatorio")
+    if not description or not description.strip():
+        raise HTTPException(status_code=400, detail="La descripción es obligatoria")
+    if not ends_at:
+        raise HTTPException(status_code=400, detail="La fecha de finalización es obligatoria")
 
 
 def get_display_tournament(db: Session) -> Tournament | None:
@@ -187,12 +254,38 @@ def save_tournament(
     ends_at: datetime | None,
     is_active: bool,
 ) -> Tournament:
-    current = get_tournament_for_save(db, tournament_id, admin_id)
+    _validate_tournament_fields(title, description, ends_at)
+
+    if tournament_id is not None:
+        current = get_tournament_for_save(db, tournament_id, admin_id)
+    else:
+        active = get_active_tournament(db)
+        if active:
+            active = maybe_finalize_tournament(db, active)
+        if is_active and active and active.status == "active":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'Ya hay un torneo activo ("{active.title}"). '
+                    "Espera a que finalice antes de activar otro."
+                ),
+            )
+        current = Tournament(
+            title=title.strip(),
+            description=description.strip(),
+            image_url=None,
+            status="draft",
+            is_active=False,
+            created_by_id=admin_id,
+            ends_at=_ensure_aware(ends_at),
+        )
+        db.add(current)
+        db.flush()
 
     if current.status == "finished":
         raise HTTPException(status_code=400, detail="No se puede editar un torneo finalizado")
 
-    current.title = title.strip() or DEFAULT_TITLE
+    current.title = title.strip()
     current.description = description.strip()
     current.updated_at = _now()
 
@@ -287,3 +380,29 @@ def get_tournament_image_bytes(tournament_id: int) -> tuple[bytes, str]:
     except Exception as exc:
         logger.exception("Error al leer imagen de torneo %s", tournament_id)
         raise HTTPException(status_code=500, detail="Error al obtener la imagen") from exc
+
+
+def contribute_to_tournament(db: Session, user_id: int, amount: float) -> User:
+    active = get_active_tournament(db)
+    if not active:
+        raise HTTPException(status_code=400, detail="No hay un torneo activo")
+    active = maybe_finalize_tournament(db, active)
+    if active.status != "active":
+        raise HTTPException(status_code=400, detail="No hay un torneo activo")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if user.is_admin:
+        raise HTTPException(status_code=400, detail="Los administradores no pueden participar en torneos")
+    if user.balance < amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Saldo insuficiente. Disponible: {user.balance:.0f} Guayabits",
+        )
+
+    user.balance -= amount
+    user.tournament_balance += amount
+    db.commit()
+    db.refresh(user)
+    return user

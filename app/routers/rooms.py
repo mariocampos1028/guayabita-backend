@@ -9,6 +9,14 @@ from app.services import room_service, auth_service
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 
+def _ensure_player_user(user: User) -> None:
+    if user.is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Los administradores no pueden crear ni unirse a salas",
+        )
+
+
 def _format_room(room: dict) -> RoomResponse:
     game_state = None
     if room.get("game_state"):
@@ -29,6 +37,7 @@ def create_room(
     req: CreateRoomRequest,
     current_user: User = Depends(get_current_user),
 ):
+    _ensure_player_user(current_user)
     min_balance = req.case_value * 2
     if current_user.balance < min_balance:
         raise HTTPException(
@@ -44,6 +53,7 @@ def join_room(
     code: str,
     current_user: User = Depends(get_current_user),
 ):
+    _ensure_player_user(current_user)
     room = room_service.get_room(code.upper())
     case_value = room["case_value"]
     min_balance = case_value * 2

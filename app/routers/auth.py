@@ -256,9 +256,15 @@ def leaderboard(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Devuelve, como máximo, los 50 jugadores con mayor saldo."""
+    """Devuelve, como máximo, los 50 jugadores con mayor saldo en el torneo activo."""
     _ = current_user
-    users = db.query(User).order_by(User.balance.desc(), User.id.asc()).limit(50).all()
+    users = (
+        db.query(User)
+        .filter(User.is_admin == False, User.tournament_balance > 0)
+        .order_by(User.tournament_balance.desc(), User.id.asc())
+        .limit(50)
+        .all()
+    )
     return [LeaderboardEntry.model_validate(user) for user in users]
 
 

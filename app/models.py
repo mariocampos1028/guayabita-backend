@@ -93,6 +93,7 @@ class UserResponse(BaseModel):
     username: str
     email: str
     balance: float
+    tournament_balance: float
     email_verified: bool
     first_name: str
     last_name: str
@@ -101,6 +102,7 @@ class UserResponse(BaseModel):
     birth_date: date | None
     avatar_url: str | None
     is_admin: bool
+    last_login_at: datetime | None
 
     model_config = {"from_attributes": True}
 
@@ -125,9 +127,18 @@ class ResetPasswordRequest(BaseModel):
 class LeaderboardEntry(BaseModel):
     id: int
     username: str
-    balance: float
+    tournament_balance: float
 
     model_config = {"from_attributes": True}
+
+
+class TournamentContributeRequest(BaseModel):
+    amount: float = Field(..., gt=0)
+
+
+class TournamentBalanceResponse(BaseModel):
+    balance: float
+    tournament_balance: float
 
 
 # ── Torneos ────────────────────────────────────────────────────────────────────
