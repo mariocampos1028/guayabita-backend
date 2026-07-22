@@ -13,6 +13,7 @@ class Player(BaseModel):
     id: int
     name: str
     balance: float
+    eliminated: bool = False
 
 
 class TurnState(BaseModel):
@@ -22,6 +23,7 @@ class TurnState(BaseModel):
     first_roll: Optional[int] = None
     second_roll: Optional[int] = None
     message: str
+    deadline_at: Optional[datetime] = None
 
 
 class GameState(BaseModel):
@@ -141,6 +143,23 @@ class TournamentBalanceResponse(BaseModel):
     tournament_balance: float
 
 
+# ── Auditoría de partidas ──────────────────────────────────────────────────────
+
+class GameHistorySummary(BaseModel):
+    id: int
+    room_code: str
+    winner_id: int | None
+    winner_username: str | None
+    finished_at: datetime
+    player_count: int
+    has_audit: bool
+
+
+class GameHistoryDetail(GameHistorySummary):
+    players: list[dict]
+    audit_log: list[dict]
+
+
 # ── Torneos ────────────────────────────────────────────────────────────────────
 
 TournamentStatus = Literal["draft", "active", "finished"]
@@ -205,6 +224,8 @@ class RoomResponse(BaseModel):
     status: str
     players: list[RoomPlayer]
     game_state: Optional[GameState] = None
+    wait_expires_at: Optional[datetime] = None
+    max_players: int = 10
 
 
 class RoomSummary(BaseModel):

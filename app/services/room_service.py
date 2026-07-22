@@ -1,17 +1,22 @@
-import os
 import json
+import os
 import random
 import string
+from datetime import datetime, timedelta, timezone
+
+from dotenv import load_dotenv
 from fastapi import HTTPException
 from upstash_redis import Redis
 from app.models import GameState, TurnState, Player
 from app.game_logic import start_game as logic_start_game, _empty_turn
-from dotenv import load_dotenv
+from app.services import game_audit_service
 
 load_dotenv()
 
 ROOM_TTL = 60 * 60 * 24  # 24 horas en segundos
 USER_ROOM_TTL = 60 * 60 * 24
+WAIT_TIMEOUT_SECONDS = 300
+MAX_PLAYERS = 10
 
 redis = Redis(
     url=os.getenv("UPSTASH_REDIS_REST_URL", ""),
@@ -36,6 +41,41 @@ def _serialize(state: GameState) -> str:
 
 def _deserialize(data: str) -> GameState:
     return GameState.model_validate_json(data)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _sync_wait_timer(room: dict) -> None:
+    if room.get("status") != "waiting":
+        room.pop("wait_expires_at", None)
+        return
+    if len(room.get("players", [])) > 1:
+        if not room.get("wait_expires_at"):
+            room["wait_expires_at"] = (_now() + timedelta(seconds=WAIT_TIMEOUT_SECONDS)).isoformat()
+    else:
+        room.pop("wait_expires_at", None)
+
+
+def _expire_waiting_room_if_needed(code: str, room: dict) -> None:
+    if room.get("status") != "waiting":
+        return
+    expires_raw = room.get("wait_expires_at")
+    if not expires_raw:
+        return
+    expires = datetime.fromisoformat(expires_raw)
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires > _now():
+        return
+    for player in room.get("players", []):
+        redis.delete(_user_room_key(player["user_id"]))
+    redis.delete(_room_key(code))
+    raise HTTPException(
+        status_code=410,
+        detail="La sala expiró: se superaron los 5 minutos de espera sin iniciar la partida.",
+    )
 
 
 # ── Sala ───────────────────────────────────────────────────────────────────────
@@ -72,13 +112,14 @@ def join_room(code: str, user_id: int, username: str) -> dict:
     room = json.loads(raw)
     if room["status"] != "waiting":
         raise HTTPException(400, "La partida ya comenzó o terminó")
-    if len(room["players"]) >= 10:
-        raise HTTPException(400, "La sala está llena (máx. 10 jugadores)")
+    if len(room["players"]) >= MAX_PLAYERS:
+        raise HTTPException(400, "La sala está llena (máximo 10 jugadores)")
     if any(p["user_id"] == user_id for p in room["players"]):
         # Ya está en la sala — devuelve el estado actual sin agregar de nuevo
         return room
 
     room["players"].append({"user_id": user_id, "username": username, "ready": True})
+    _sync_wait_timer(room)
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
     redis.set(_user_room_key(user_id), code, ex=USER_ROOM_TTL)
     return room
@@ -88,7 +129,9 @@ def get_room(code: str) -> dict:
     raw = redis.get(_room_key(code))
     if not raw:
         raise HTTPException(404, "Sala no encontrada")
-    return json.loads(raw)
+    room = json.loads(raw)
+    _expire_waiting_room_if_needed(code, room)
+    return room
 
 
 def start_room(code: str, user_id: int, balances: dict[int, float]) -> GameState:
@@ -121,6 +164,14 @@ def start_room(code: str, user_id: int, balances: dict[int, float]) -> GameState
     # para poder calcular el delta correcto al terminar la partida
     for i, p in enumerate(room["players"]):
         p["original_balance"] = balances.get(p["user_id"], 5000)
+    room["audit_log"] = [
+        game_audit_service.build_game_start(
+            case_value=room["case_value"],
+            state=state,
+            players_meta=room["players"],
+            user_ids=room["player_user_ids"],
+        )
+    ]
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
     return state
 
@@ -137,6 +188,17 @@ def save_game_state(code: str, state: GameState) -> None:
     room["game_state"] = json.loads(_serialize(state))
     if state.status == "finished":
         room["status"] = "finished"
+    redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
+
+
+def append_audit_log(code: str, entry: dict) -> None:
+    """Agrega una entrada al log de auditoría de la partida (almacenado en Redis)."""
+    room = get_room(code)
+    log: list = room.setdefault("audit_log", [])
+    entry = dict(entry)
+    entry["seq"] = len(log) + 1
+    log.append(entry)
+    room["audit_log"] = log
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
 
 
@@ -189,6 +251,7 @@ def leave_room(code: str, user_id: int) -> None:
 
     # Quita al jugador de la lista
     room["players"] = [p for p in room["players"] if p["user_id"] != user_id]
+    _sync_wait_timer(room)
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
 
     # Desvincula al jugador de la sala
@@ -236,7 +299,7 @@ def list_waiting_rooms(current_user_id: int) -> list[dict]:
         room = json.loads(raw)
         if room.get("status") != "waiting":
             continue
-        if len(room["players"]) >= 10:
+        if len(room["players"]) >= MAX_PLAYERS:
             continue
         if any(p["user_id"] == current_user_id for p in room["players"]):
             continue
@@ -253,7 +316,7 @@ def list_waiting_rooms(current_user_id: int) -> list[dict]:
                 "creator_username": creator_username,
                 "case_value": room["case_value"],
                 "player_count": len(room["players"]),
-                "max_players": 10,
+                "max_players": MAX_PLAYERS,
             }
         )
 

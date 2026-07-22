@@ -22,6 +22,7 @@ def run_startup_migrations() -> None:
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS tournament_balance DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "ALTER TABLE game_history ADD COLUMN IF NOT EXISTS audit_log TEXT",
         """
         CREATE TABLE IF NOT EXISTS tournaments (
             id SERIAL PRIMARY KEY,

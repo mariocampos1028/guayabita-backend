@@ -45,6 +45,7 @@ class GameHistory(Base):
     room_code: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
     winner_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     players_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON con resultado de cada jugador
+    audit_log: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON compacto: historial completo
     finished_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

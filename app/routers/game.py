@@ -6,6 +6,7 @@ from app.db.models_db import User, GameHistory
 from app.dependencies import get_current_user
 from app.models import GameState, PlaceBetRequest
 from app.services import room_service, auth_service
+from app.services import game_audit_service
 import app.game_logic as logic
 
 router = APIRouter(prefix="/game", tags=["game"])
@@ -29,11 +30,35 @@ def _validate_turn(code: str, current_user: User, state: GameState) -> None:
         raise HTTPException(403, f"No es tu turno. Esperando a {current_player_name}")
 
 
+def _player_context(code: str) -> tuple[list[int], list[str]]:
+    room = room_service.get_room(code)
+    user_ids: list[int] = room.get("player_user_ids", [])
+    usernames = [p["username"] for p in room.get("players", [])]
+    return user_ids, usernames
+
+
+def _current_player_meta(code: str, state: GameState) -> tuple[int | None, str]:
+    user_ids, usernames = _player_context(code)
+    idx = state.turn.current_player_index
+    user_id = user_ids[idx] if idx < len(user_ids) else None
+    username = usernames[idx] if idx < len(usernames) else state.players[idx].name
+    return user_id, username
+
+
 def _save_and_return(code: str, state: GameState, db: Session) -> GameState:
+    state = logic.apply_turn_timeout(state)
     room_service.save_game_state(code, state)
     if state.status == "finished":
         _persist_result(code, state, db)
     return state
+
+
+def _load_state_with_timeout(code: str) -> GameState:
+    state = _get_state_or_404(code)
+    updated = logic.apply_turn_timeout(state)
+    if updated.model_dump() != state.model_dump():
+        room_service.save_game_state(code, updated)
+    return updated
 
 
 def _persist_result(code: str, state: GameState, db: Session) -> None:
@@ -69,7 +94,12 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
     history = GameHistory(
         room_code=code,
         winner_id=winner_db_id,
-        players_json=json.dumps(players_result),
+        players_json=json.dumps(players_result, separators=(",", ":")),
+        audit_log=json.dumps(
+            room.get("audit_log", []),
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ),
     )
     db.add(history)
     db.commit()
@@ -88,8 +118,14 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
 def get_state(
     code: str,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    return _get_state_or_404(code)
+    _ = current_user
+    code = code.upper()
+    state = _load_state_with_timeout(code)
+    if state.status == "finished":
+        _persist_result(code, state, db)
+    return state
 
 
 @router.post("/{code}/roll", response_model=GameState)
@@ -98,10 +134,22 @@ def roll_dice(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    state = _get_state_or_404(code)
+    code = code.upper()
+    state = _load_state_with_timeout(code)
     _validate_turn(code, current_user, state)
+    user_id, username = _current_player_meta(code, state)
     new_state = logic.roll_dice(state)
-    return _save_and_return(code.upper(), new_state, db)
+    room_service.append_audit_log(
+        code,
+        game_audit_service.build_roll(state, new_state, user_id, username),
+    )
+    if new_state.status == "finished":
+        user_ids, usernames = _player_context(code)
+        room_service.append_audit_log(
+            code,
+            game_audit_service.build_game_end(new_state, user_ids, usernames),
+        )
+    return _save_and_return(code, new_state, db)
 
 
 @router.post("/{code}/bet", response_model=GameState)
@@ -111,10 +159,16 @@ def place_bet(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    state = _get_state_or_404(code)
+    code = code.upper()
+    state = _load_state_with_timeout(code)
     _validate_turn(code, current_user, state)
     new_state = logic.place_bet(state, req.amount)
-    return _save_and_return(code.upper(), new_state, db)
+    user_id, username = _current_player_meta(code, new_state)
+    room_service.append_audit_log(
+        code,
+        game_audit_service.build_bet(new_state, user_id, username),
+    )
+    return _save_and_return(code, new_state, db)
 
 
 @router.post("/{code}/next-turn", response_model=GameState)
@@ -123,7 +177,13 @@ def next_turn(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    state = _get_state_or_404(code)
+    code = code.upper()
+    state = _load_state_with_timeout(code)
     _validate_turn(code, current_user, state)
     new_state = logic.next_turn(state)
-    return _save_and_return(code.upper(), new_state, db)
+    user_id, username = _current_player_meta(code, new_state)
+    room_service.append_audit_log(
+        code,
+        game_audit_service.build_next_turn(state, new_state, user_id, username),
+    )
+    return _save_and_return(code, new_state, db)

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
@@ -22,6 +24,8 @@ def _format_room(room: dict) -> RoomResponse:
     if room.get("game_state"):
         import json
         game_state = GameState.model_validate(room["game_state"])
+    wait_expires_at = room.get("wait_expires_at")
+    parsed_wait = datetime.fromisoformat(wait_expires_at) if wait_expires_at else None
     return RoomResponse(
         code=room["code"],
         creator_id=room["creator_id"],
@@ -29,6 +33,8 @@ def _format_room(room: dict) -> RoomResponse:
         status=room["status"],
         players=room["players"],
         game_state=game_state,
+        wait_expires_at=parsed_wait,
+        max_players=room_service.MAX_PLAYERS,
     )
 
 

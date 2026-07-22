@@ -11,6 +11,7 @@ from app.routers.auth import router as auth_router
 from app.routers.rooms import router as rooms_router
 from app.routers.game import router as game_router
 from app.routers.tournaments import router as tournaments_router
+from app.routers.audit import router as audit_router
 
 load_dotenv()
 
@@ -34,6 +35,7 @@ app.include_router(auth_router)
 app.include_router(tournaments_router)
 app.include_router(rooms_router)
 app.include_router(game_router)
+app.include_router(audit_router)
 
 
 @app.get("/")
