@@ -74,6 +74,11 @@ def run_startup_migrations() -> None:
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """,
+        """
+        UPDATE recharge_purchases
+        SET reference = 'GUA-' || id::text || '-FIXED'
+        WHERE reference = 'pending'
+        """,
     ]
     with engine.begin() as conn:
         for sql in statements:

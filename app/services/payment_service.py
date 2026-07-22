@@ -18,7 +18,10 @@ def _to_purchase_response(purchase: RechargePurchase):
 
 
 def create_checkout(db: Session, user: User, package_id: int) -> dict:
-    wompi_service.ensure_wompi_configured()
+    try:
+        wompi_service.ensure_wompi_configured()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     package = db.query(RechargePackage).filter(RechargePackage.id == package_id).first()
     if not package:
@@ -32,7 +35,7 @@ def create_checkout(db: Session, user: User, package_id: int) -> dict:
         package_name=package.name,
         price=package.price,
         guayabits=package.guayabits,
-        reference="pending",
+        reference=wompi_service.generate_placeholder_reference(),
         status="pending",
         created_at=_now(),
         updated_at=_now(),

@@ -48,6 +48,11 @@ def generate_reference(purchase_id: int) -> str:
     return f"GUA-{purchase_id}-{token}"
 
 
+def generate_placeholder_reference() -> str:
+    """Referencia temporal única hasta tener el id de la compra."""
+    return f"GUA-TMP-{secrets.token_hex(8).upper()}"
+
+
 def price_to_cents(price: float) -> int:
     return int(round(price * 100))
 
