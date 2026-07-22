@@ -87,3 +87,58 @@ class Tournament(Base):
 
     winner = relationship("User", foreign_keys=[winner_user_id])
     created_by = relationship("User", foreign_keys=[created_by_id])
+
+
+class RechargePackage(Base):
+    __tablename__ = "recharge_packages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    guayabits: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", index=True)
+    popular: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+
+
+class RechargePurchase(Base):
+    __tablename__ = "recharge_purchases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    package_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("recharge_packages.id"), nullable=True)
+    package_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    guayabits: Mapped[float] = mapped_column(Float, nullable=False)
+    reference: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    wompi_transaction_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    wompi_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    wompi_payment_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    package = relationship("RechargePackage", foreign_keys=[package_id])

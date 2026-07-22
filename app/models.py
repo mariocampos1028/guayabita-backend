@@ -234,3 +234,81 @@ class RoomSummary(BaseModel):
     case_value: float
     player_count: int
     max_players: int = 10
+
+
+# ── Paquetes de recarga ────────────────────────────────────────────────────────
+
+PackageStatus = Literal["active", "inactive"]
+
+
+class RechargePackageBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    price: float = Field(..., gt=0)
+    guayabits: float = Field(..., gt=0)
+    status: PackageStatus = "active"
+    popular: bool = False
+
+
+class RechargePackageCreateRequest(RechargePackageBase):
+    pass
+
+
+class RechargePackageUpdateRequest(RechargePackageBase):
+    pass
+
+
+class RechargePackageResponse(RechargePackageBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    updated_by_id: int | None = None
+    updated_by_username: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class RechargePackagePublicResponse(BaseModel):
+    id: int
+    name: str
+    price: float
+    guayabits: float
+    popular: bool
+
+    model_config = {"from_attributes": True}
+
+
+# ── Pagos Wompi ────────────────────────────────────────────────────────────────
+
+PurchaseStatus = Literal["pending", "approved", "cancelled", "declined", "error", "voided"]
+
+
+class CheckoutRequest(BaseModel):
+    package_id: int = Field(..., gt=0)
+
+
+class CheckoutResponse(BaseModel):
+    purchase_id: int
+    reference: str
+    public_key: str
+    currency: str
+    amount_in_cents: int
+    signature: str
+    redirect_url: str | None = None
+    customer_email: str
+    customer_full_name: str
+
+
+class PurchaseResponse(BaseModel):
+    id: int
+    package_name: str
+    price: float
+    guayabits: float
+    reference: str
+    status: PurchaseStatus
+    wompi_transaction_id: str | None = None
+    wompi_status: str | None = None
+    wompi_payment_method: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

@@ -44,6 +44,36 @@ def run_startup_migrations() -> None:
             created_by_id INTEGER REFERENCES users(id)
         )
         """,
+        """
+        CREATE TABLE IF NOT EXISTS recharge_packages (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(120) NOT NULL,
+            price DOUBLE PRECISION NOT NULL,
+            guayabits DOUBLE PRECISION NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            popular BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_by_id INTEGER REFERENCES users(id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS recharge_purchases (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            package_id INTEGER REFERENCES recharge_packages(id),
+            package_name VARCHAR(120) NOT NULL,
+            price DOUBLE PRECISION NOT NULL,
+            guayabits DOUBLE PRECISION NOT NULL,
+            reference VARCHAR(64) NOT NULL UNIQUE,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            wompi_transaction_id VARCHAR(80),
+            wompi_status VARCHAR(30),
+            wompi_payment_method VARCHAR(40),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
     ]
     with engine.begin() as conn:
         for sql in statements:
