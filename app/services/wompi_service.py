@@ -22,7 +22,17 @@ def resolve_redirect_url() -> str | None:
     lowered = configured.lower()
     if "localhost" in lowered or "127.0.0.1" in lowered:
         return None
+    if "/wompi/webhook" in lowered:
+        return frontend_result_url()
     return configured
+
+
+def frontend_result_url(transaction_id: str | None = None) -> str:
+    base = _env("FRONTEND_URL", "http://localhost:4200").rstrip("/")
+    url = f"{base}/recargar/resultado"
+    if transaction_id:
+        return f"{url}?id={transaction_id}"
+    return url
 
 WOMPI_API_BASE = (
     "https://production.wompi.co/v1"
