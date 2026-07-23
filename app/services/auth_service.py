@@ -48,6 +48,14 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
+def ensure_new_password_is_different(user: User, new_password: str) -> None:
+    if verify_password(new_password, user.password_hash):
+        raise HTTPException(
+            status_code=400,
+            detail="La nueva contraseña no puede ser igual a la contraseña actual.",
+        )
+
+
 # ── JWT ────────────────────────────────────────────────────────────────────────
 
 def create_token(user_id: int) -> str:
@@ -246,6 +254,7 @@ def reset_password_with_token(db: Session, token: str, new_password: str) -> Use
         raise HTTPException(status_code=400, detail="Enlace inválido o expirado")
 
     user = get_user_by_id(db, int(user_id_str))
+    ensure_new_password_is_different(user, new_password)
     user.password_hash = hash_password(new_password)
     db.commit()
     db.refresh(user)
@@ -276,6 +285,7 @@ def change_password(db: Session, user_id: int, current_password: str, new_passwo
     user = get_user_by_id(db, user_id)
     if not verify_password(current_password, user.password_hash):
         raise HTTPException(status_code=400, detail="La contraseña actual es incorrecta")
+    ensure_new_password_is_different(user, new_password)
     user.password_hash = hash_password(new_password)
     db.commit()
     db.refresh(user)
