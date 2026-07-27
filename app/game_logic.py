@@ -323,3 +323,45 @@ def next_turn(state: GameState) -> GameState:
     if state.status != "playing" or state.turn.phase != "result":
         raise HTTPException(400, "No es el momento de pasar turno")
     return _advance_to_next_turn(state)
+
+
+def leave_game(state: GameState, player_index: int) -> GameState:
+    """Un jugador abandona la partida: queda eliminado y pierde lo apostado en la mesa (el pozo actual)."""
+    if state.status != "playing":
+        raise HTTPException(400, "La partida no está en curso")
+    if player_index < 0 or player_index >= len(state.players):
+        raise HTTPException(400, "Jugador no válido")
+
+    player = state.players[player_index]
+    if player.eliminated:
+        raise HTTPException(400, "Ya estás fuera de la partida")
+
+    pot = state.table_balance
+    players = _mark_eliminated(state.players, player.id)
+
+    new_state = state.model_copy(update={
+        "players": players,
+        "turn": state.turn.model_copy(update={
+            "message": (
+                f"{player.name} se retiró de la partida y perdió "
+                f"lo apostado en la mesa (${pot:.0f})."
+            ),
+        }),
+    })
+
+    ended = _resolve_endgame(new_state)
+    if ended.status == "finished":
+        if ended.winner:
+            msg = (
+                f"¡{ended.winner.name} gana la partida! "
+                f"{player.name} se retiró de la partida."
+            )
+            return ended.model_copy(update={
+                "turn": ended.turn.model_copy(update={"message": msg}),
+            })
+        return ended
+
+    if player_index == state.turn.current_player_index:
+        return _advance_to_next_turn(new_state)
+
+    return new_state

@@ -168,6 +168,16 @@ def update_user_balance(db: Session, user_id: int, delta: float) -> User:
     return user
 
 
+def set_user_balance(db: Session, user_id: int, balance: float, *, commit: bool = True) -> User:
+    """Establece el saldo absoluto del usuario (usado al cerrar una partida)."""
+    user = get_user_by_id(db, user_id)
+    user.balance = balance
+    if commit:
+        db.commit()
+        db.refresh(user)
+    return user
+
+
 # ── Verificación de correo ─────────────────────────────────────────────────────
 
 def _email_verify_key(token: str) -> str:

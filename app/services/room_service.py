@@ -6,10 +6,11 @@ from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 from upstash_redis import Redis
 from app.models import GameState, TurnState, Player
 from app.game_logic import start_game as logic_start_game, _empty_turn
-from app.services import game_audit_service
+from app.services import game_audit_service, auth_service
 
 load_dotenv()
 
@@ -134,10 +135,11 @@ def get_room(code: str) -> dict:
     return room
 
 
-def start_room(code: str, user_id: int, balances: dict[int, float]) -> GameState:
+def start_room(code: str, user_id: int, balances: dict[int, float], db: Session) -> GameState:
     """
     Inicia la partida de una sala.
-    balances: {user_id: balance_actual} consultado de PostgreSQL.
+    balances: {user_id: balance_actual} consultado de PostgreSQL antes del case.
+    Descuenta el case en BD y guarda el saldo base en juego para calcular deltas al final.
     """
     room = get_room(code)
     if room["creator_id"] != user_id:
@@ -149,21 +151,31 @@ def start_room(code: str, user_id: int, balances: dict[int, float]) -> GameState
 
     from app.models import PlayerConfig as PC, StartGameRequest
 
+    case_value = room["case_value"]
+
+    for p in room["players"]:
+        uid = p["user_id"]
+        bal = balances.get(uid, 5000)
+        if bal < case_value:
+            raise HTTPException(
+                400,
+                f"El jugador {p['username']} no tiene saldo suficiente para el case (${case_value:.0f})",
+            )
+        auth_service.update_user_balance(db, uid, -case_value)
+
     players_config = [
         PC(name=p["username"], balance=balances.get(p["user_id"], 5000))
         for p in room["players"]
     ]
-    req = StartGameRequest(players=players_config, case_value=room["case_value"])
+    req = StartGameRequest(players=players_config, case_value=case_value)
     state = logic_start_game(req)
 
     room["status"] = "playing"
     room["game_state"] = json.loads(_serialize(state))
-    # Mapea player index → user_id para poder actualizar saldos luego
     room["player_user_ids"] = [p["user_id"] for p in room["players"]]
-    # Guarda el saldo original de cada jugador (antes de descontar el case inicial)
-    # para poder calcular el delta correcto al terminar la partida
+    # Saldo en juego tras pagar el case — debe coincidir con BD y estado del juego
     for i, p in enumerate(room["players"]):
-        p["original_balance"] = balances.get(p["user_id"], 5000)
+        p["original_balance"] = balances.get(p["user_id"], 5000) - case_value
     room["audit_log"] = [
         game_audit_service.build_game_start(
             case_value=room["case_value"],
@@ -188,6 +200,13 @@ def save_game_state(code: str, state: GameState) -> None:
     room["game_state"] = json.loads(_serialize(state))
     if state.status == "finished":
         room["status"] = "finished"
+    redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
+
+
+def mark_result_persisted(code: str) -> None:
+    """Evita aplicar el cierre de partida más de una vez (p. ej. por polling)."""
+    room = get_room(code)
+    room["result_persisted"] = True
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
 
 
@@ -217,6 +236,11 @@ def get_user_active_room(user_id: int) -> str | None:
         redis.delete(_user_room_key(user_id))
         return None
     return code
+
+
+def leave_active_game(user_id: int) -> None:
+    """Desvincula al jugador que abandonó una partida en curso."""
+    redis.delete(_user_room_key(user_id))
 
 
 def leave_finished_room(user_id: int) -> None:

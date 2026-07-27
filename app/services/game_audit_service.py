@@ -125,6 +125,27 @@ def build_next_turn(before: GameState, after: GameState, user_id: int | None, us
     }
 
 
+def build_player_left(
+    before: GameState,
+    after: GameState,
+    player_index: int,
+    user_id: int | None,
+    username: str,
+) -> dict:
+    return {
+        "at": _now_iso(),
+        "e": "leave",
+        "i": player_index,
+        "u": user_id,
+        "n": username,
+        "amt": round(before.table_balance, 2),
+        "tbl": round(after.table_balance, 2),
+        "b": round(before.players[player_index].balance, 2),
+        "msg": after.turn.message,
+        "end": after.status == "finished",
+    }
+
+
 def build_game_end(state: GameState, user_ids: list[int], usernames: list[str]) -> dict:
     winner = None
     if state.winner:

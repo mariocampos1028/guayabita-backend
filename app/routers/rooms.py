@@ -103,7 +103,7 @@ def start_room(
         user = auth_service.get_user_by_id(db, p["user_id"])
         balances[p["user_id"]] = user.balance
 
-    room_service.start_room(code, current_user.id, balances)
+    room_service.start_room(code, current_user.id, balances, db)
     updated_room = room_service.get_room(code)
     return _format_room(updated_room)
 

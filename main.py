@@ -10,6 +10,8 @@ from app.db.database import engine
 from app.db import models_db  # noqa: F401 — necesario para que Base conozca los modelos
 from app.db.database import Base
 from app.db.migrations import run_startup_migrations
+from app.middleware.maintenance import MaintenanceMiddleware
+from app.config.maintenance import is_maintenance_mode, maintenance_message
 from app.routers.auth import router as auth_router
 from app.routers.rooms import router as rooms_router
 from app.routers.game import router as game_router
@@ -27,6 +29,8 @@ Base.metadata.create_all(bind=engine)
 run_startup_migrations()
 
 app = FastAPI(title="Guayabita API", version="2.0.0")
+
+app.add_middleware(MaintenanceMiddleware)
 
 origins = [
     origin.strip()
@@ -68,3 +72,11 @@ app.include_router(payments_router)
 @app.get("/")
 def root():
     return {"message": "Guayabita API v2 running"}
+
+
+@app.get("/status")
+def status():
+    return {
+        "maintenance_mode": is_maintenance_mode(),
+        "message": maintenance_message(),
+    }

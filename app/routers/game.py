@@ -68,6 +68,9 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
         # La sala ya fue eliminada de Redis — _persist_result ya corrió antes
         return
 
+    if room.get("result_persisted"):
+        return
+
     player_ids: list[int] = room.get("player_user_ids", [])
 
     winner_db_id = None
@@ -76,10 +79,8 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
     for i, player in enumerate(state.players):
         user_id = player_ids[i] if i < len(player_ids) else None
         if user_id:
-            original_balance = room["players"][i].get("original_balance", player.balance)
-            delta = player.balance - original_balance
-            if delta != 0:
-                auth_service.update_user_balance(db, user_id, delta)
+            # Saldo final en juego = saldo real en BD (case ya descontado al iniciar)
+            auth_service.set_user_balance(db, user_id, player.balance, commit=False)
 
         if state.winner and state.winner.id == player.id:
             winner_db_id = player_ids[i] if i < len(player_ids) else None
@@ -103,6 +104,8 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
     )
     db.add(history)
     db.commit()
+
+    room_service.mark_result_persisted(code)
 
     # Limpia Redis: borra user_room de cada jugador (para que /auth/session
     # no los devuelva a esta sala) pero deja room:{code} vivo 5 minutos más
@@ -187,3 +190,43 @@ def next_turn(
         game_audit_service.build_next_turn(state, new_state, user_id, username),
     )
     return _save_and_return(code, new_state, db)
+
+
+@router.post("/{code}/leave", response_model=GameState)
+def leave_game(
+    code: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    code = code.upper()
+    state = _load_state_with_timeout(code)
+    if state.status != "playing":
+        raise HTTPException(400, "La partida no está en curso")
+
+    room = room_service.get_room(code)
+    player_ids: list[int] = room.get("player_user_ids", [])
+    try:
+        player_index = player_ids.index(current_user.id)
+    except ValueError:
+        raise HTTPException(403, "No estás en esta partida")
+
+    usernames = [p["username"] for p in room.get("players", [])]
+    username = usernames[player_index] if player_index < len(usernames) else current_user.username
+
+    new_state = logic.leave_game(state, player_index)
+    room_service.append_audit_log(
+        code,
+        game_audit_service.build_player_left(
+            state, new_state, player_index, current_user.id, username
+        ),
+    )
+    if new_state.status == "finished":
+        room_service.append_audit_log(
+            code,
+            game_audit_service.build_game_end(new_state, player_ids, usernames),
+        )
+
+    saved = _save_and_return(code, new_state, db)
+    if new_state.status != "finished":
+        room_service.leave_active_game(current_user.id)
+    return saved
