@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.db.models_db import Tournament, User
+from app.db.models_db import GameHistory, Tournament, User
 from app.services.image_processing import (
     OUTPUT_CONTENT_TYPE,
     process_prize_webp,
@@ -57,13 +59,85 @@ def get_latest_finished_tournament(db: Session) -> Tournament | None:
     )
 
 
-def get_leaderboard_winner(db: Session) -> User | None:
-    return (
+def _alphabetical_rank_key(username: str) -> str:
+    """Orden alfabético sin distinguir mayúsculas ni tildes."""
+    normalized = unicodedata.normalize("NFD", (username or "").casefold())
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+
+
+def _count_user_game_stats(db: Session, user_ids: set[int]) -> tuple[dict[int, int], dict[int, int]]:
+    """Cuenta partidas jugadas y ganadas, ignorando historiales duplicados."""
+    games_played = {user_id: 0 for user_id in user_ids}
+    games_won = {user_id: 0 for user_id in user_ids}
+    seen_games: set[tuple] = set()
+
+    histories = db.query(
+        GameHistory.room_code,
+        GameHistory.winner_id,
+        GameHistory.players_json,
+    ).all()
+
+    for history in histories:
+        fingerprint = (history.room_code, history.winner_id, history.players_json)
+        if fingerprint in seen_games:
+            continue
+        seen_games.add(fingerprint)
+
+        try:
+            participants = json.loads(history.players_json or "[]")
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("No se pudo leer participantes de historial %s", fingerprint)
+            participants = []
+
+        participant_ids = {
+            participant.get("user_id")
+            for participant in participants
+            if isinstance(participant, dict) and participant.get("user_id") in user_ids
+        }
+        for user_id in participant_ids:
+            games_played[user_id] += 1
+
+        if history.winner_id in games_won:
+            games_won[history.winner_id] += 1
+
+    return games_played, games_won
+
+
+def get_ranked_tournament_players(db: Session, limit: int | None = None) -> list[User]:
+    """Ordena el ranking con los desempates oficiales del torneo.
+
+    1. Más Guayabits en el torneo.
+    2. Más partidas jugadas.
+    3. Más partidas ganadas.
+    4. Orden alfabético del usuario.
+    """
+    users = (
         db.query(User)
         .filter(User.is_admin == False, User.tournament_balance > 0)
-        .order_by(User.tournament_balance.desc(), User.id.asc())
-        .first()
+        .all()
     )
+    if not users:
+        return []
+
+    user_ids = {user.id for user in users}
+    games_played, games_won = _count_user_game_stats(db, user_ids)
+
+    ranked = sorted(
+        users,
+        key=lambda user: (
+            -user.tournament_balance,
+            -games_played[user.id],
+            -games_won[user.id],
+            _alphabetical_rank_key(user.username),
+            user.id,
+        ),
+    )
+    return ranked[:limit] if limit is not None else ranked
+
+
+def get_leaderboard_winner(db: Session) -> User | None:
+    ranked = get_ranked_tournament_players(db, limit=1)
+    return ranked[0] if ranked else None
 
 
 def _refund_loser_tournament_balances(db: Session, winner_id: int | None) -> None:
@@ -145,6 +219,40 @@ def create_new_draft(db: Session, admin_id: int) -> Tournament:
         title=finished.title if finished else DEFAULT_TITLE,
         description=finished.description if finished else DEFAULT_DESCRIPTION,
         image_url=(finished.image_url if finished else None) or DEFAULT_PRIZE_IMAGE,
+        status="draft",
+        is_active=False,
+        created_by_id=admin_id,
+    )
+    db.add(tournament)
+    db.commit()
+    db.refresh(tournament)
+    return tournament
+
+
+def relaunch_tournament(db: Session, tournament_id: int, admin_id: int) -> Tournament:
+    """Crea un nuevo borrador usando un premio finalizado como plantilla."""
+    source = get_tournament_by_id(db, tournament_id)
+    if source.status != "finished":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se pueden reutilizar premios de torneos finalizados",
+        )
+
+    active = get_active_tournament(db)
+    if active:
+        active = maybe_finalize_tournament(db, active)
+        if active.status == "active":
+            raise HTTPException(
+                status_code=400,
+                detail="No puedes reutilizar un premio mientras hay un torneo activo",
+            )
+
+    tournament = Tournament(
+        title=source.title,
+        description=source.description,
+        # La imagen del premio finalizado no se modifica, por lo que se puede
+        # reutilizar con seguridad sin alterar el historial original.
+        image_url=source.image_url,
         status="draft",
         is_active=False,
         created_by_id=admin_id,

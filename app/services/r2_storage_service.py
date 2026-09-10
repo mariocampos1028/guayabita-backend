@@ -39,6 +39,12 @@ def tournament_public_url(tournament_id: int) -> str:
     return f"{r2_settings.api_public_url}/tournaments/{tournament_id}/image"
 
 
+def store_public_url(key: str) -> str:
+    if r2_settings.has_public_url:
+        return f"{r2_settings.public_url}/{key}"
+    return f"{r2_settings.api_public_url}/store/media/{key}"
+
+
 class R2StorageService:
     """Operaciones CRUD de objetos en Cloudflare R2."""
 

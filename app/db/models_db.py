@@ -142,3 +142,150 @@ class RechargePurchase(Base):
 
     user = relationship("User", foreign_keys=[user_id])
     package = relationship("RechargePackage", foreign_keys=[package_id])
+
+
+class StoreProduct(Base):
+    __tablename__ = "store_products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    category: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    short_description: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    guayabits_reward: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    allow_cash_on_delivery: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_direct_payment: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+
+    media = relationship(
+        "StoreProductMedia",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="StoreProductMedia.sort_order",
+    )
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+
+
+class StoreProductMedia(Base):
+    __tablename__ = "store_product_media"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("store_products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    media_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
+    url: Mapped[str] = mapped_column(String(700), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+    product = relationship("StoreProduct", back_populates="media")
+
+
+class StorePaymentMethod(Base):
+    __tablename__ = "store_payment_methods"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    method_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    identifier: Mapped[str] = mapped_column(String(160), nullable=False)
+    instructions: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+
+
+class StoreOrder(Base):
+    __tablename__ = "store_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    reference: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    product_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("store_products.id"), nullable=True)
+    product_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    product_price: Mapped[float] = mapped_column(Float, nullable=False)
+    guayabits_reward: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    customer_first_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    customer_last_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    customer_email: Mapped[str] = mapped_column(String(120), nullable=False)
+    customer_phone: Mapped[str] = mapped_column(String(30), nullable=False)
+    shipping_address: Mapped[str] = mapped_column(String(255), nullable=False)
+    department: Mapped[str] = mapped_column(String(80), nullable=False)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    reference_point: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    customer_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    payment_method_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("store_payment_methods.id"), nullable=True
+    )
+    payment_method_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    payment_receipt_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payment_receipt_url: Mapped[str | None] = mapped_column(String(700), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="en_proceso", index=True)
+    admin_observations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    guayabits_credited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    product = relationship("StoreProduct", foreign_keys=[product_id])
+    payment_method = relationship("StorePaymentMethod", foreign_keys=[payment_method_id])
+
+
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    messages = relationship("SupportMessage", back_populates="ticket", cascade="all, delete-orphan", order_by="SupportMessage.created_at")
+
+
+class SupportMessage(Base):
+    __tablename__ = "support_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    ticket_id: Mapped[int] = mapped_column(Integer, ForeignKey("support_tickets.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    sender_role: Mapped[str] = mapped_column(String(10), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    ticket = relationship("SupportTicket", back_populates="messages")
+    sender = relationship("User", foreign_keys=[sender_id])

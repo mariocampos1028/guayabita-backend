@@ -19,6 +19,8 @@ from app.routers.tournaments import router as tournaments_router
 from app.routers.audit import router as audit_router
 from app.routers.packages import router as packages_router
 from app.routers.payments import router as payments_router
+from app.routers.store import router as store_router
+from app.routers.support import router as support_router
 
 load_dotenv()
 
@@ -67,6 +69,8 @@ app.include_router(game_router)
 app.include_router(audit_router)
 app.include_router(packages_router)
 app.include_router(payments_router)
+app.include_router(store_router)
+app.include_router(support_router)
 
 
 @app.get("/")

@@ -79,6 +79,106 @@ def run_startup_migrations() -> None:
         SET reference = 'GUA-' || id::text || '-FIXED'
         WHERE reference = 'pending'
         """,
+        """
+        CREATE TABLE IF NOT EXISTS store_products (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(160) NOT NULL,
+            category VARCHAR(80) NOT NULL,
+            short_description VARCHAR(300) NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            price DOUBLE PRECISION NOT NULL,
+            guayabits_reward DOUBLE PRECISION NOT NULL DEFAULT 0,
+            allow_cash_on_delivery BOOLEAN NOT NULL DEFAULT TRUE,
+            allow_direct_payment BOOLEAN NOT NULL DEFAULT TRUE,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_by_id INTEGER REFERENCES users(id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS store_product_media (
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+            media_type VARCHAR(10) NOT NULL,
+            object_key VARCHAR(500) NOT NULL UNIQUE,
+            url VARCHAR(700) NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS store_payment_methods (
+            id SERIAL PRIMARY KEY,
+            method_type VARCHAR(20) NOT NULL,
+            display_name VARCHAR(80) NOT NULL,
+            owner_name VARCHAR(160) NOT NULL,
+            identifier VARCHAR(160) NOT NULL,
+            instructions TEXT NOT NULL DEFAULT '',
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_by_id INTEGER REFERENCES users(id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS store_orders (
+            id SERIAL PRIMARY KEY,
+            reference VARCHAR(64) NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            product_id INTEGER REFERENCES store_products(id),
+            product_name VARCHAR(160) NOT NULL,
+            product_price DOUBLE PRECISION NOT NULL,
+            guayabits_reward DOUBLE PRECISION NOT NULL DEFAULT 0,
+            quantity INTEGER NOT NULL DEFAULT 1,
+            customer_first_name VARCHAR(80) NOT NULL,
+            customer_last_name VARCHAR(80) NOT NULL,
+            customer_email VARCHAR(120) NOT NULL,
+            customer_phone VARCHAR(30) NOT NULL,
+            shipping_address VARCHAR(255) NOT NULL,
+            department VARCHAR(80) NOT NULL,
+            city VARCHAR(100) NOT NULL,
+            reference_point VARCHAR(300),
+            customer_notes TEXT,
+            payment_type VARCHAR(30) NOT NULL,
+            payment_method_id INTEGER REFERENCES store_payment_methods(id),
+            payment_method_name VARCHAR(80),
+            payment_receipt_key VARCHAR(500),
+            payment_receipt_url VARCHAR(700),
+            status VARCHAR(30) NOT NULL DEFAULT 'en_proceso',
+            admin_observations TEXT,
+            guayabits_credited BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_store_products_status ON store_products(status)",
+        "CREATE INDEX IF NOT EXISTS ix_store_orders_user_id ON store_orders(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_store_orders_status ON store_orders(status)",
+        """
+        CREATE TABLE IF NOT EXISTS support_tickets (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            category VARCHAR(20) NOT NULL,
+            title VARCHAR(160) NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'open',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            closed_at TIMESTAMPTZ
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS support_messages (
+            id SERIAL PRIMARY KEY,
+            ticket_id INTEGER NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+            sender_id INTEGER NOT NULL REFERENCES users(id),
+            sender_role VARCHAR(10) NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_support_tickets_user_id ON support_tickets(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_support_tickets_status ON support_tickets(status)",
+        "CREATE INDEX IF NOT EXISTS ix_support_messages_ticket_id ON support_messages(ticket_id)",
     ]
     with engine.begin() as conn:
         for sql in statements:

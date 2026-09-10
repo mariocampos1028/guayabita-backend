@@ -68,7 +68,7 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
         # La sala ya fue eliminada de Redis — _persist_result ya corrió antes
         return
 
-    if room.get("result_persisted"):
+    if not room_service.claim_result_persistence(code):
         return
 
     player_ids: list[int] = room.get("player_user_ids", [])
@@ -92,20 +92,23 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
             "final_balance": player.balance,
         })
 
-    history = GameHistory(
-        room_code=code,
-        winner_id=winner_db_id,
-        players_json=json.dumps(players_result, separators=(",", ":")),
-        audit_log=json.dumps(
-            room.get("audit_log", []),
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ),
-    )
-    db.add(history)
-    db.commit()
-
-    room_service.mark_result_persisted(code)
+    try:
+        history = GameHistory(
+            room_code=code,
+            winner_id=winner_db_id,
+            players_json=json.dumps(players_result, separators=(",", ":")),
+            audit_log=json.dumps(
+                room.get("audit_log", []),
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ),
+        )
+        db.add(history)
+        db.commit()
+    except Exception:
+        db.rollback()
+        room_service.release_result_persistence_claim(code)
+        raise
 
     # Limpia Redis: borra user_room de cada jugador (para que /auth/session
     # no los devuelva a esta sala) pero deja room:{code} vivo 5 minutos más

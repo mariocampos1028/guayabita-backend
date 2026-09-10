@@ -20,6 +20,7 @@ from app.models import (
 )
 from app.services import auth_service
 from app.services import room_service
+from app.services import tournament_service
 from app.services.avatar_service import upload_user_avatar, delete_user_avatar, get_user_avatar_bytes
 from app.emails import (
     send_password_changed_email,
@@ -256,15 +257,9 @@ def leaderboard(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Devuelve, como máximo, los 50 jugadores con mayor saldo en el torneo activo."""
+    """Devuelve, como máximo, los 50 jugadores del ranking del torneo activo."""
     _ = current_user
-    users = (
-        db.query(User)
-        .filter(User.is_admin == False, User.tournament_balance > 0)
-        .order_by(User.tournament_balance.desc(), User.id.asc())
-        .limit(50)
-        .all()
-    )
+    users = tournament_service.get_ranked_tournament_players(db, limit=50)
     return [LeaderboardEntry.model_validate(user) for user in users]
 
 

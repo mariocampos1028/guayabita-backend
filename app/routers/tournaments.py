@@ -33,6 +33,16 @@ def create_tournament_draft(
     return _to_response(tournament)
 
 
+@router.post("/{tournament_id}/relaunch", response_model=TournamentResponse)
+def relaunch_tournament(
+    tournament_id: int,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    tournament = tournament_service.relaunch_tournament(db, tournament_id, admin.id)
+    return _to_response(tournament)
+
+
 @router.get("/current", response_model=TournamentResponse | None)
 def get_current_tournament(
     current_user: User = Depends(get_current_user),

@@ -210,6 +210,20 @@ def mark_result_persisted(code: str) -> None:
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
 
 
+def claim_result_persistence(code: str) -> bool:
+    """Obtiene de forma atómica el derecho a guardar el resultado de una partida.
+
+    El polling de cada jugador puede detectar el fin a la vez. ``SET NX`` evita
+    que más de una solicitud cree un historial y aplique los saldos.
+    """
+    return bool(redis.set(f"result_persisted:{code}", "1", nx=True, ex=ROOM_TTL))
+
+
+def release_result_persistence_claim(code: str) -> None:
+    """Libera el bloqueo si guardar el resultado falló antes del commit."""
+    redis.delete(f"result_persisted:{code}")
+
+
 def append_audit_log(code: str, entry: dict) -> None:
     """Agrega una entrada al log de auditoría de la partida (almacenado en Redis)."""
     room = get_room(code)

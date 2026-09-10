@@ -312,3 +312,167 @@ class PurchaseResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Tienda y pedidos ──────────────────────────────────────────────────────────
+
+StoreProductStatus = Literal["active", "inactive"]
+StoreOrderStatus = Literal[
+    "en_validacion",
+    "en_proceso",
+    "en_alistamiento",
+    "en_reparto",
+    "entregado",
+    "rechazado",
+]
+StorePaymentType = Literal["contraentrega", "directo"]
+StorePaymentMethodType = Literal["bre_b", "nequi", "daviplata"]
+
+
+class StoreProductMediaResponse(BaseModel):
+    id: int
+    media_type: Literal["image", "video"]
+    url: str
+    sort_order: int
+
+    model_config = {"from_attributes": True}
+
+
+class StoreProductBase(BaseModel):
+    name: str = Field(..., min_length=2, max_length=160)
+    category: str = Field(..., min_length=2, max_length=80)
+    short_description: str = Field(..., min_length=2, max_length=300)
+    description: str = Field(..., min_length=2, max_length=5000)
+    price: float = Field(..., gt=0)
+    guayabits_reward: float = Field(..., ge=0)
+    allow_cash_on_delivery: bool = True
+    allow_direct_payment: bool = True
+    status: StoreProductStatus = "active"
+
+    @field_validator("allow_direct_payment")
+    @classmethod
+    def validate_payment_option(cls, value: bool, info):
+        if not value and info.data.get("allow_cash_on_delivery") is False:
+            raise ValueError("El producto debe permitir al menos una forma de pago")
+        return value
+
+
+class StoreProductCreateRequest(StoreProductBase):
+    pass
+
+
+class StoreProductUpdateRequest(StoreProductBase):
+    pass
+
+
+class StoreProductResponse(StoreProductBase):
+    id: int
+    media: list[StoreProductMediaResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class StorePaymentMethodBase(BaseModel):
+    method_type: StorePaymentMethodType
+    display_name: str = Field(..., min_length=2, max_length=80)
+    owner_name: str = Field(..., min_length=2, max_length=160)
+    identifier: str = Field(..., min_length=3, max_length=160)
+    instructions: str = Field(default="", max_length=1000)
+    is_active: bool = True
+
+
+class StorePaymentMethodRequest(StorePaymentMethodBase):
+    pass
+
+
+class StorePaymentMethodResponse(StorePaymentMethodBase):
+    id: int
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class StoreOrderResponse(BaseModel):
+    id: int
+    reference: str
+    product_id: int | None
+    product_name: str
+    product_price: float
+    guayabits_reward: float
+    quantity: int
+    customer_first_name: str
+    customer_last_name: str
+    customer_email: str
+    customer_phone: str
+    shipping_address: str
+    department: str
+    city: str
+    reference_point: str | None
+    customer_notes: str | None
+    payment_type: StorePaymentType
+    payment_method_id: int | None
+    payment_method_name: str | None
+    payment_receipt_url: str | None
+    status: StoreOrderStatus
+    admin_observations: str | None
+    guayabits_credited: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class StoreOrderShippingUpdateRequest(BaseModel):
+    shipping_address: str = Field(..., min_length=5, max_length=255)
+    department: str = Field(..., min_length=2, max_length=80)
+    city: str = Field(..., min_length=2, max_length=100)
+    reference_point: str | None = Field(default=None, max_length=300)
+    customer_notes: str | None = Field(default=None, max_length=1000)
+
+
+class StoreOrderStatusUpdateRequest(BaseModel):
+    status: StoreOrderStatus
+    admin_observations: str | None = Field(default=None, max_length=2000)
+
+
+# ── Soporte ───────────────────────────────────────────────────────────────────
+SupportCategory = Literal["solicitud", "peticion", "felicitacion", "sugerencia"]
+SupportTicketStatus = Literal["open", "closed"]
+
+
+class SupportTicketCreateRequest(BaseModel):
+    category: SupportCategory
+    title: str = Field(..., min_length=3, max_length=160)
+    detail: str = Field(..., min_length=3, max_length=5000)
+
+
+class SupportMessageCreateRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=5000)
+
+
+class SupportMessageResponse(BaseModel):
+    id: int
+    sender_id: int
+    sender_role: Literal["user", "admin"]
+    content: str
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class SupportTicketResponse(BaseModel):
+    id: int
+    user_id: int
+    username: str
+    customer_first_name: str
+    customer_last_name: str
+    customer_email: str
+    customer_phone: str
+    category: SupportCategory
+    title: str
+    status: SupportTicketStatus
+    created_at: datetime
+    updated_at: datetime
+    closed_at: datetime | None
+    messages: list[SupportMessageResponse] = Field(default_factory=list)
