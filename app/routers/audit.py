@@ -6,8 +6,13 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db.models_db import User
 from app.dependencies import get_current_admin
-from app.models import GameHistoryDetail, GameHistorySummary
-from app.services import game_history_service
+from app.models import (
+    BalanceAdjustmentLogDetailResponse,
+    GameHistoryDetail,
+    GameHistorySummary,
+    StoreOrderAuditEventResponse,
+)
+from app.services import admin_users_service, game_history_service, store_service
 
 router = APIRouter(prefix="/admin/audit", tags=["admin-audit"])
 
@@ -40,6 +45,37 @@ def list_audit_records(
         on_date=date,
     )
     return [_to_summary(h) for h in histories]
+
+
+@router.get("/system/balance", response_model=list[BalanceAdjustmentLogDetailResponse])
+def list_balance_audit(
+    user_id: int | None = Query(default=None),
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    _ = admin
+    return admin_users_service.list_balance_logs(db, user_id=user_id)
+
+
+@router.get("/events/orders", response_model=list[StoreOrderAuditEventResponse])
+def list_store_order_events(
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    _ = admin
+    orders = store_service.list_all_orders(db)
+    return [
+        StoreOrderAuditEventResponse(
+            id=order.id,
+            reference=order.reference,
+            customer_name=f"{order.customer_first_name} {order.customer_last_name}".strip(),
+            product_name=order.product_name,
+            status=order.status,
+            payment_type=order.payment_type,
+            updated_at=order.updated_at,
+        )
+        for order in orders
+    ]
 
 
 @router.get("/{history_id}", response_model=GameHistoryDetail)

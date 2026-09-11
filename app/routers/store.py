@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.db.models_db import StoreOrder, User
-from app.dependencies import get_current_admin, get_current_user
+from app.dependencies import get_current_admin, get_current_non_admin
 from app.models import (
     StoreOrderResponse,
     StoreOrderShippingUpdateRequest,
@@ -16,15 +16,24 @@ from app.models import (
     StoreProductResponse,
     StoreProductUpdateRequest,
 )
+from app.config.store_categories import STORE_CATEGORIES
 from app.services import store_service
 from app.services.store_media_service import get_store_object
 
 router = APIRouter(tags=["store"])
 
 
+@router.get("/store/categories", response_model=list[str])
+def product_categories(
+    current_user: User = Depends(get_current_non_admin),
+):
+    _ = current_user
+    return list(STORE_CATEGORIES)
+
+
 @router.get("/store/products", response_model=list[StoreProductResponse])
 def products(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
     _ = current_user
@@ -34,7 +43,7 @@ def products(
 @router.get("/store/products/{product_id}", response_model=StoreProductResponse)
 def product_detail(
     product_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
     _ = current_user
@@ -43,7 +52,7 @@ def product_detail(
 
 @router.get("/store/payment-methods", response_model=list[StorePaymentMethodResponse])
 def payment_methods(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
     _ = current_user
@@ -61,7 +70,7 @@ def create_order(
     reference_point: str | None = Form(default=None, max_length=300),
     customer_notes: str | None = Form(default=None, max_length=1000),
     receipt: UploadFile | None = File(default=None),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
     return store_service.create_order(
@@ -81,7 +90,7 @@ def create_order(
 
 @router.get("/store/orders/me", response_model=list[StoreOrderResponse])
 def my_orders(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
     return store_service.list_user_orders(db, current_user.id)
@@ -91,10 +100,49 @@ def my_orders(
 def update_shipping(
     order_id: int,
     payload: StoreOrderShippingUpdateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
     return store_service.update_order_shipping(db, order_id, current_user.id, payload)
+
+
+@router.get("/store/orders/{order_id}/receipt")
+def user_order_receipt(
+    order_id: int,
+    current_user: User = Depends(get_current_non_admin),
+    db: Session = Depends(get_db),
+):
+    key, _ = store_service.get_user_order_receipt(db, order_id, current_user.id)
+    data, content_type = get_store_object(key)
+    return Response(data, media_type=content_type)
+
+
+@router.post("/store/orders/{order_id}/correction", response_model=StoreOrderResponse)
+def submit_order_correction(
+    order_id: int,
+    shipping_address: str = Form(..., min_length=5, max_length=255),
+    department: str = Form(..., min_length=2, max_length=80),
+    city: str = Form(..., min_length=2, max_length=100),
+    reference_point: str | None = Form(default=None, max_length=300),
+    customer_notes: str | None = Form(default=None, max_length=1000),
+    receipt: UploadFile | None = File(default=None),
+    current_user: User = Depends(get_current_non_admin),
+    db: Session = Depends(get_db),
+):
+    payload = StoreOrderShippingUpdateRequest(
+        shipping_address=shipping_address,
+        department=department,
+        city=city,
+        reference_point=reference_point,
+        customer_notes=customer_notes,
+    )
+    return store_service.submit_order_correction(
+        db,
+        order_id,
+        current_user.id,
+        payload,
+        receipt,
+    )
 
 
 @router.get("/store/media/{key:path}")

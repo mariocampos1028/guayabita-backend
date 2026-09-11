@@ -261,6 +261,26 @@ class StoreOrder(Base):
     payment_method = relationship("StorePaymentMethod", foreign_keys=[payment_method_id])
 
 
+class BalanceAdjustmentLog(Base):
+    __tablename__ = "balance_adjustment_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    admin_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    previous_balance: Mapped[float] = mapped_column(Float, nullable=False)
+    new_balance: Mapped[float] = mapped_column(Float, nullable=False)
+    delta: Mapped[float] = mapped_column(Float, nullable=False)
+    justification: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    admin = relationship("User", foreign_keys=[admin_id])
+
+
 class SupportTicket(Base):
     __tablename__ = "support_tickets"
 

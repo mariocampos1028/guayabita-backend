@@ -22,12 +22,13 @@ from app.models import (
 )
 from app.services.store_media_service import (
     delete_store_object,
-    payment_receipt_url,
     upload_payment_receipt,
     upload_product_media,
 )
 
-EDITABLE_ORDER_STATUSES = {"en_validacion", "en_proceso"}
+EDITABLE_ORDER_STATUSES = {"en_validacion", "en_proceso", "devuelto_correccion"}
+DIRECT_PAYMENT_EDIT_STATUSES = {"en_validacion", "devuelto_correccion"}
+CLOSED_ORDER_STATUSES = {"entregado", "rechazado"}
 ORDER_STATUSES = {
     "en_validacion",
     "en_proceso",
@@ -35,6 +36,7 @@ ORDER_STATUSES = {
     "en_reparto",
     "entregado",
     "rechazado",
+    "devuelto_correccion",
 }
 
 
@@ -44,6 +46,38 @@ def _now() -> datetime:
 
 def _reference() -> str:
     return f"PED-{_now():%Y%m%d}-{secrets.token_hex(4).upper()}"
+
+
+def _credit_order_guayabits(db: Session, order: StoreOrder) -> None:
+    if order.guayabits_credited or order.guayabits_reward <= 0:
+        return
+    user = db.query(User).filter(User.id == order.user_id).with_for_update().first()
+    if not user or user.is_admin:
+        return
+    user.balance += order.guayabits_reward * order.quantity
+    order.guayabits_credited = True
+
+
+def _user_receipt_url(order_id: int) -> str:
+    return f"/store/orders/{order_id}/receipt"
+
+
+def _order_allows_shipping_edit(order: StoreOrder) -> bool:
+    return (
+        not order.guayabits_credited
+        and order.status in EDITABLE_ORDER_STATUSES
+    )
+
+
+def _get_user_order(db: Session, order_id: int, user_id: int) -> StoreOrder:
+    order = (
+        db.query(StoreOrder)
+        .filter(StoreOrder.id == order_id, StoreOrder.user_id == user_id)
+        .first()
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    return order
 
 
 def list_products(db: Session, *, include_inactive: bool = False) -> list[StoreProduct]:
@@ -173,6 +207,12 @@ def create_order(
     customer_notes: str | None,
     receipt: UploadFile | None,
 ) -> StoreOrder:
+    if user.is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Los administradores no pueden realizar compras en la tienda",
+        )
+
     product = get_product(db, product_id)
     if payment_type == "contraentrega":
         if not product.allow_cash_on_delivery:
@@ -241,7 +281,7 @@ def create_order(
     db.add(order)
     db.flush()
     if receipt_key:
-        order.payment_receipt_url = payment_receipt_url(order.id)
+        order.payment_receipt_url = _user_receipt_url(order.id)
     db.commit()
     db.refresh(order)
     return order
@@ -256,20 +296,65 @@ def list_user_orders(db: Session, user_id: int) -> list[StoreOrder]:
     )
 
 
+def get_user_order_receipt(db: Session, order_id: int, user_id: int) -> tuple[str, StoreOrder]:
+    order = _get_user_order(db, order_id, user_id)
+    if not order.payment_receipt_key:
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado")
+    return order.payment_receipt_key, order
+
+
 def update_order_shipping(
     db: Session, order_id: int, user_id: int, payload: StoreOrderShippingUpdateRequest
 ) -> StoreOrder:
-    order = (
-        db.query(StoreOrder)
-        .filter(StoreOrder.id == order_id, StoreOrder.user_id == user_id)
-        .first()
-    )
-    if not order:
-        raise HTTPException(status_code=404, detail="Pedido no encontrado")
-    if order.status not in EDITABLE_ORDER_STATUSES:
-        raise HTTPException(status_code=409, detail="El pedido ya no permite editar el envío")
+    order = _get_user_order(db, order_id, user_id)
+    if not _order_allows_shipping_edit(order):
+        raise HTTPException(
+            status_code=409,
+            detail="Este pedido ya fue cerrado o ya recibió los Guayabits de regalo",
+        )
     for key, value in payload.model_dump().items():
         setattr(order, key, value.strip() if isinstance(value, str) else value)
+    order.updated_at = _now()
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def submit_order_correction(
+    db: Session,
+    order_id: int,
+    user_id: int,
+    payload: StoreOrderShippingUpdateRequest,
+    receipt: UploadFile | None,
+) -> StoreOrder:
+    order = _get_user_order(db, order_id, user_id)
+    if order.guayabits_credited:
+        raise HTTPException(status_code=409, detail="Este pedido ya fue cerrado")
+    if order.payment_type != "directo":
+        raise HTTPException(status_code=400, detail="Solo aplica a pedidos con pago directo")
+    if order.status not in DIRECT_PAYMENT_EDIT_STATUSES:
+        raise HTTPException(status_code=409, detail="Este pedido ya no permite correcciones")
+
+    for key, value in payload.model_dump().items():
+        setattr(order, key, value.strip() if isinstance(value, str) else value)
+
+    requires_resubmit = order.status == "devuelto_correccion"
+    if requires_resubmit and receipt is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Debes adjuntar un comprobante legible para reenviar la solicitud",
+        )
+
+    if receipt is not None:
+        if order.payment_receipt_key:
+            delete_store_object(order.payment_receipt_key)
+        receipt_key = upload_payment_receipt(order.reference, receipt)
+        order.payment_receipt_key = receipt_key
+        order.payment_receipt_url = _user_receipt_url(order.id)
+
+    if requires_resubmit:
+        order.status = "en_validacion"
+
     order.updated_at = _now()
     db.commit()
     db.refresh(order)
@@ -294,16 +379,32 @@ def update_order_status(
     if payload.status not in ORDER_STATUSES:
         raise HTTPException(status_code=400, detail="Estado inválido")
 
-    should_credit = (
-        order.payment_type == "directo" and payload.status == "en_proceso"
-    ) or (
-        order.payment_type == "contraentrega" and payload.status == "entregado"
-    )
-    if should_credit and not order.guayabits_credited:
-        user = db.query(User).filter(User.id == order.user_id).with_for_update().first()
-        if user:
-            user.balance += order.guayabits_reward * order.quantity
-            order.guayabits_credited = True
+    if payload.status == "devuelto_correccion":
+        if order.payment_type != "directo":
+            raise HTTPException(
+                status_code=400,
+                detail="Solo los pedidos con pago directo pueden devolverse a corrección",
+            )
+        if not (payload.admin_observations or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Debes indicar al cliente qué debe corregir",
+            )
+
+    if order.guayabits_credited and order.status in CLOSED_ORDER_STATUSES:
+        if payload.status != order.status:
+            raise HTTPException(
+                status_code=409,
+                detail="Este pedido ya fue cerrado y no puede reabrirse ni cambiar de estado",
+            )
+        order.admin_observations = payload.admin_observations
+        order.updated_at = _now()
+        db.commit()
+        db.refresh(order)
+        return order
+
+    if payload.status == "entregado":
+        _credit_order_guayabits(db, order)
 
     order.status = payload.status
     order.admin_observations = payload.admin_observations

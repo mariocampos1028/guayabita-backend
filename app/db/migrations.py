@@ -179,6 +179,20 @@ def run_startup_migrations() -> None:
         "CREATE INDEX IF NOT EXISTS ix_support_tickets_user_id ON support_tickets(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_support_tickets_status ON support_tickets(status)",
         "CREATE INDEX IF NOT EXISTS ix_support_messages_ticket_id ON support_messages(ticket_id)",
+        """
+        CREATE TABLE IF NOT EXISTS balance_adjustment_logs (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            admin_id INTEGER NOT NULL REFERENCES users(id),
+            previous_balance DOUBLE PRECISION NOT NULL,
+            new_balance DOUBLE PRECISION NOT NULL,
+            delta DOUBLE PRECISION NOT NULL,
+            justification TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_balance_adjustment_logs_user_id ON balance_adjustment_logs(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_balance_adjustment_logs_admin_id ON balance_adjustment_logs(admin_id)",
     ]
     with engine.begin() as conn:
         for sql in statements:

@@ -324,6 +324,7 @@ StoreOrderStatus = Literal[
     "en_reparto",
     "entregado",
     "rechazado",
+    "devuelto_correccion",
 ]
 StorePaymentType = Literal["contraentrega", "directo"]
 StorePaymentMethodType = Literal["bre_b", "nequi", "daviplata"]
@@ -341,6 +342,19 @@ class StoreProductMediaResponse(BaseModel):
 class StoreProductBase(BaseModel):
     name: str = Field(..., min_length=2, max_length=160)
     category: str = Field(..., min_length=2, max_length=80)
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, value: str) -> str:
+        from app.config.store_categories import STORE_CATEGORIES
+
+        normalized = value.strip()
+        if normalized not in STORE_CATEGORIES:
+            raise ValueError(
+                "Categoría inválida. Usa una de: "
+                + ", ".join(STORE_CATEGORIES)
+            )
+        return normalized
     short_description: str = Field(..., min_length=2, max_length=300)
     description: str = Field(..., min_length=2, max_length=5000)
     price: float = Field(..., gt=0)
@@ -430,6 +444,45 @@ class StoreOrderShippingUpdateRequest(BaseModel):
     city: str = Field(..., min_length=2, max_length=100)
     reference_point: str | None = Field(default=None, max_length=300)
     customer_notes: str | None = Field(default=None, max_length=1000)
+
+
+class AdminBalanceAdjustmentRequest(BaseModel):
+    new_balance: float = Field(..., ge=0)
+    justification: str = Field(..., min_length=5, max_length=500)
+
+
+class BalanceAdjustmentLogResponse(BaseModel):
+    id: int
+    user_id: int
+    admin_id: int
+    previous_balance: float
+    new_balance: float
+    delta: float
+    justification: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BalanceAdjustmentLogDetailResponse(BalanceAdjustmentLogResponse):
+    user_username: str
+    user_full_name: str
+    admin_username: str
+
+
+class StoreOrderAuditEventResponse(BaseModel):
+    id: int
+    reference: str
+    customer_name: str
+    product_name: str
+    status: str
+    payment_type: str
+    updated_at: datetime
+
+
+class AdminBalanceAdjustmentResponse(BaseModel):
+    user: UserResponse
+    log: BalanceAdjustmentLogResponse
 
 
 class StoreOrderStatusUpdateRequest(BaseModel):
