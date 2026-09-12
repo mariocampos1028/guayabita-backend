@@ -335,8 +335,28 @@ class StoreProductMediaResponse(BaseModel):
     media_type: Literal["image", "video"]
     url: str
     sort_order: int
+    is_primary: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class StoreGuayabitsRewardTierRequest(BaseModel):
+    amount_from: float = Field(..., ge=0)
+    amount_to: float = Field(..., gt=0)
+    guayabits_reward: float = Field(..., ge=0)
+
+
+class StoreGuayabitsRewardTierResponse(StoreGuayabitsRewardTierRequest):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GuayabitsRewardCalculationResponse(BaseModel):
+    price: float
+    guayabits_reward: float
 
 
 class StoreProductBase(BaseModel):
@@ -359,6 +379,7 @@ class StoreProductBase(BaseModel):
     description: str = Field(..., min_length=2, max_length=5000)
     price: float = Field(..., gt=0)
     guayabits_reward: float = Field(..., ge=0)
+    is_popular: bool = False
     allow_cash_on_delivery: bool = True
     allow_direct_payment: bool = True
     status: StoreProductStatus = "active"
@@ -371,11 +392,15 @@ class StoreProductBase(BaseModel):
         return value
 
 
-class StoreProductCreateRequest(StoreProductBase):
+class StoreProductAdminFields(BaseModel):
+    product_code: str = Field(default="", max_length=80)
+
+
+class StoreProductCreateRequest(StoreProductBase, StoreProductAdminFields):
     pass
 
 
-class StoreProductUpdateRequest(StoreProductBase):
+class StoreProductUpdateRequest(StoreProductBase, StoreProductAdminFields):
     pass
 
 
@@ -384,6 +409,12 @@ class StoreProductResponse(StoreProductBase):
     media: list[StoreProductMediaResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class StoreProductAdminResponse(StoreProductResponse):
+    product_code: str = ""
 
     model_config = {"from_attributes": True}
 

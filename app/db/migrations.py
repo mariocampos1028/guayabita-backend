@@ -193,6 +193,35 @@ def run_startup_migrations() -> None:
         """,
         "CREATE INDEX IF NOT EXISTS ix_balance_adjustment_logs_user_id ON balance_adjustment_logs(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_balance_adjustment_logs_admin_id ON balance_adjustment_logs(admin_id)",
+        """
+        CREATE TABLE IF NOT EXISTS store_guayabits_reward_tiers (
+            id SERIAL PRIMARY KEY,
+            amount_from DOUBLE PRECISION NOT NULL,
+            amount_to DOUBLE PRECISION NOT NULL,
+            guayabits_reward DOUBLE PRECISION NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "ALTER TABLE store_products ADD COLUMN IF NOT EXISTS product_code VARCHAR(80) NOT NULL DEFAULT ''",
+        "ALTER TABLE store_products ADD COLUMN IF NOT EXISTS is_popular BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE store_product_media ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT FALSE",
+        "CREATE INDEX IF NOT EXISTS ix_store_products_product_code ON store_products(product_code)",
+        "CREATE INDEX IF NOT EXISTS ix_store_products_is_popular ON store_products(is_popular)",
+        """
+        UPDATE store_product_media AS m
+        SET is_primary = TRUE
+        FROM (
+            SELECT DISTINCT ON (product_id) id
+            FROM store_product_media
+            ORDER BY product_id, sort_order, id
+        ) AS first_media
+        WHERE m.id = first_media.id
+          AND NOT EXISTS (
+            SELECT 1 FROM store_product_media p
+            WHERE p.product_id = m.product_id AND p.is_primary = TRUE
+          )
+        """,
     ]
     with engine.begin() as conn:
         for sql in statements:

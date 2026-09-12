@@ -4,6 +4,7 @@ import secrets
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, UploadFile
+from sqlalchemy import desc
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models_db import (
@@ -84,7 +85,10 @@ def list_products(db: Session, *, include_inactive: bool = False) -> list[StoreP
     query = db.query(StoreProduct).options(joinedload(StoreProduct.media))
     if not include_inactive:
         query = query.filter(StoreProduct.status == "active")
-    return query.order_by(StoreProduct.created_at.desc()).all()
+    return query.order_by(
+        desc(StoreProduct.is_popular),
+        StoreProduct.created_at.desc(),
+    ).all()
 
 
 def get_product(db: Session, product_id: int, *, allow_inactive: bool = False) -> StoreProduct:
@@ -130,19 +134,129 @@ def archive_product(db: Session, product_id: int, admin_id: int) -> StoreProduct
     return get_product(db, product.id, allow_inactive=True)
 
 
+def activate_product(db: Session, product_id: int, admin_id: int) -> StoreProduct:
+    product = get_product(db, product_id, allow_inactive=True)
+    product.status = "active"
+    product.updated_by_id = admin_id
+    product.updated_at = _now()
+    db.commit()
+    return get_product(db, product.id, allow_inactive=True)
+
+
+def delete_product(db: Session, product_id: int) -> None:
+    product = get_product(db, product_id, allow_inactive=True)
+    for media in list(product.media):
+        delete_store_object(media.object_key)
+    db.query(StoreOrder).filter(StoreOrder.product_id == product_id).update(
+        {StoreOrder.product_id: None},
+        synchronize_session=False,
+    )
+    db.delete(product)
+    db.commit()
+
+
+def _product_media_query(db: Session, product_id: int):
+    return db.query(StoreProductMedia).filter(StoreProductMedia.product_id == product_id)
+
+
+def _ensure_primary_media(db: Session, product_id: int) -> None:
+    media_items = _product_media_query(db, product_id).order_by(
+        StoreProductMedia.sort_order,
+        StoreProductMedia.id,
+    ).all()
+    if not media_items:
+        return
+    if any(item.is_primary for item in media_items):
+        return
+    preferred = next((item for item in media_items if item.media_type == "image"), media_items[0])
+    preferred.is_primary = True
+    db.commit()
+
+
 def add_product_media(
-    db: Session, product_id: int, file: UploadFile, sort_order: int
+    db: Session,
+    product_id: int,
+    file: UploadFile,
+    sort_order: int,
+    *,
+    is_primary: bool = False,
+    auto_primary_if_empty: bool = True,
+    commit: bool = True,
 ) -> StoreProductMedia:
     get_product(db, product_id, allow_inactive=True)
     media_type, key, url = upload_product_media(product_id, file)
+    existing = _product_media_query(db, product_id).count()
+    should_be_primary = is_primary or (auto_primary_if_empty and existing == 0)
+    if should_be_primary:
+        _product_media_query(db, product_id).update({StoreProductMedia.is_primary: False})
     media = StoreProductMedia(
         product_id=product_id,
         media_type=media_type,
         object_key=key,
         url=url,
         sort_order=sort_order,
+        is_primary=should_be_primary,
     )
     db.add(media)
+    if commit:
+        db.commit()
+        db.refresh(media)
+    else:
+        db.flush()
+    return media
+
+
+def add_product_media_batch(
+    db: Session,
+    product_id: int,
+    files: list[UploadFile],
+    *,
+    primary_index: int | None = None,
+    start_sort_order: int = 0,
+) -> list[StoreProductMedia]:
+    if not files:
+        return []
+    get_product(db, product_id, allow_inactive=True)
+    existing = _product_media_query(db, product_id).count()
+    has_primary = _product_media_query(db, product_id).filter(
+        StoreProductMedia.is_primary.is_(True),
+    ).count() > 0
+    created: list[StoreProductMedia] = []
+    for index, file in enumerate(files):
+        should_be_primary = (
+            (primary_index == index)
+            or (primary_index is None and index == 0 and not has_primary and existing == 0)
+        )
+        if should_be_primary and (has_primary or created):
+            _product_media_query(db, product_id).update({StoreProductMedia.is_primary: False})
+        media = add_product_media(
+            db,
+            product_id,
+            file,
+            start_sort_order + index,
+            is_primary=should_be_primary,
+            auto_primary_if_empty=False,
+            commit=False,
+        )
+        if should_be_primary:
+            has_primary = True
+        created.append(media)
+    db.commit()
+    for media in created:
+        db.refresh(media)
+    return created
+
+
+def set_primary_media(db: Session, product_id: int, media_id: int) -> StoreProductMedia:
+    media = (
+        _product_media_query(db, product_id)
+        .filter(StoreProductMedia.id == media_id)
+        .first()
+    )
+    if not media:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    _product_media_query(db, product_id).update({StoreProductMedia.is_primary: False})
+    media.is_primary = True
     db.commit()
     db.refresh(media)
     return media
@@ -150,18 +264,18 @@ def add_product_media(
 
 def delete_product_media(db: Session, product_id: int, media_id: int) -> None:
     media = (
-        db.query(StoreProductMedia)
-        .filter(
-            StoreProductMedia.id == media_id,
-            StoreProductMedia.product_id == product_id,
-        )
+        _product_media_query(db, product_id)
+        .filter(StoreProductMedia.id == media_id)
         .first()
     )
     if not media:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    was_primary = media.is_primary
     delete_store_object(media.object_key)
     db.delete(media)
     db.commit()
+    if was_primary:
+        _ensure_primary_media(db, product_id)
 
 
 def list_payment_methods(db: Session, *, include_inactive: bool = False) -> list[StorePaymentMethod]:

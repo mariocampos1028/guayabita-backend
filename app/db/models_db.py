@@ -144,16 +144,36 @@ class RechargePurchase(Base):
     package = relationship("RechargePackage", foreign_keys=[package_id])
 
 
+class StoreGuayabitsRewardTier(Base):
+    __tablename__ = "store_guayabits_reward_tiers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    amount_from: Mapped[float] = mapped_column(Float, nullable=False)
+    amount_to: Mapped[float] = mapped_column(Float, nullable=False)
+    guayabits_reward: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
 class StoreProduct(Base):
     __tablename__ = "store_products"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    product_code: Mapped[str] = mapped_column(String(80), nullable=False, default="", index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     category: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     short_description: Mapped[str] = mapped_column(String(300), nullable=False, default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     price: Mapped[float] = mapped_column(Float, nullable=False)
     guayabits_reward: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    is_popular: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     allow_cash_on_delivery: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_direct_payment: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False, index=True)
@@ -172,7 +192,7 @@ class StoreProduct(Base):
         "StoreProductMedia",
         back_populates="product",
         cascade="all, delete-orphan",
-        order_by="StoreProductMedia.sort_order",
+        order_by="StoreProductMedia.is_primary.desc(), StoreProductMedia.sort_order",
     )
     updated_by = relationship("User", foreign_keys=[updated_by_id])
 
@@ -188,6 +208,7 @@ class StoreProductMedia(Base):
     object_key: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
     url: Mapped[str] = mapped_column(String(700), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )

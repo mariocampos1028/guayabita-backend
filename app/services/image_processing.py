@@ -40,6 +40,17 @@ def encode_webp(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
+def encode_webp_fast(image: Image.Image, *, quality: int = 82, max_bytes: int = 900 * 1024) -> bytes:
+    """Conversión WebP más rápida para medios de tienda (method=4)."""
+    buffer = io.BytesIO()
+    image.save(buffer, format="WEBP", quality=quality, method=4)
+    if buffer.tell() <= max_bytes:
+        return buffer.getvalue()
+    buffer = io.BytesIO()
+    image.save(buffer, format="WEBP", quality=70, method=4)
+    return buffer.getvalue()
+
+
 def to_rgb(image: Image.Image) -> Image.Image:
     if image.mode == "RGBA":
         background = Image.new("RGB", image.size, (255, 255, 255))
@@ -81,3 +92,17 @@ def process_prize_webp(data: bytes, max_size: tuple[int, int] = (1024, 1024)) ->
 
     image.thumbnail(max_size, Image.Resampling.LANCZOS)
     return encode_webp(to_rgb(image))
+
+
+def process_store_webp(data: bytes, max_size: tuple[int, int] = (1400, 1400)) -> bytes:
+    try:
+        image = Image.open(io.BytesIO(data))
+        image.load()
+    except UnidentifiedImageError as exc:
+        raise HTTPException(status_code=400, detail="Archivo inválido") from exc
+
+    if image.mode not in ("RGB", "RGBA"):
+        image = image.convert("RGBA")
+
+    image.thumbnail(max_size, Image.Resampling.LANCZOS)
+    return encode_webp_fast(to_rgb(image))

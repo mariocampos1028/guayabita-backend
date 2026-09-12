@@ -7,7 +7,7 @@ import secrets
 
 from fastapi import HTTPException, UploadFile
 
-from app.services.image_processing import process_prize_webp
+from app.services.image_processing import process_store_webp
 from app.services.r2_storage_service import get_r2_storage_service, store_public_url
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ def upload_product_media(product_id: int, file: UploadFile) -> tuple[str, str, s
     content_type = (file.content_type or "").lower()
     if content_type in IMAGE_TYPES:
         raw, _ = _read(file, IMAGE_TYPES, MAX_IMAGE_BYTES)
-        data = process_prize_webp(raw, (1400, 1400))
+        data = process_store_webp(raw, (1400, 1400))
         media_type, extension, output_type = "image", "webp", "image/webp"
     elif content_type in VIDEO_TYPES:
         data, output_type = _read(file, VIDEO_TYPES, MAX_VIDEO_BYTES)
