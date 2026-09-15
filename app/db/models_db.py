@@ -1,5 +1,5 @@
 from datetime import datetime, timezone, date
-from sqlalchemy import Integer, String, Float, DateTime, Text, ForeignKey, Boolean, Date
+from sqlalchemy import Integer, String, Float, DateTime, Text, ForeignKey, Boolean, Date, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.database import Base
 
@@ -34,8 +34,14 @@ class User(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    referral_link_generations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     game_histories = relationship("GameHistory", back_populates="winner", foreign_keys="GameHistory.winner_id")
+    referrals_made = relationship(
+        "Referral",
+        back_populates="referrer",
+        foreign_keys="Referral.referrer_id",
+    )
 
 
 class GameHistory(Base):
@@ -282,6 +288,27 @@ class StoreOrder(Base):
     payment_method = relationship("StorePaymentMethod", foreign_keys=[payment_method_id])
 
 
+class BalanceMovement(Base):
+    __tablename__ = "balance_movements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    movement_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    concept: Mapped[str] = mapped_column(String(255), nullable=False)
+    previous_balance: Mapped[float] = mapped_column(Float, nullable=False)
+    new_balance: Mapped[float] = mapped_column(Float, nullable=False)
+    delta: Mapped[float] = mapped_column(Float, nullable=False)
+    reference_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
 class BalanceAdjustmentLog(Base):
     __tablename__ = "balance_adjustment_logs"
 
@@ -316,6 +343,62 @@ class SupportTicket(Base):
 
     user = relationship("User", foreign_keys=[user_id])
     messages = relationship("SupportMessage", back_populates="ticket", cascade="all, delete-orphan", order_by="SupportMessage.created_at")
+
+
+class PlatformSettings(Base):
+    __tablename__ = "platform_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lobby_inactivity_minutes: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    verification_resend_cooldown_minutes: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class ReferralSettings(Base):
+    __tablename__ = "referral_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    max_referrals_per_user: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    guayabits_per_referral: Mapped[float] = mapped_column(Float, default=1000.0, nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class Referral(Base):
+    __tablename__ = "referrals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    referrer_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    referred_user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pendiente", index=True)
+    guayabits_rewarded: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    referrer = relationship("User", back_populates="referrals_made", foreign_keys=[referrer_id])
+    referred_user = relationship("User", foreign_keys=[referred_user_id])
 
 
 class SupportMessage(Base):

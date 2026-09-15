@@ -119,7 +119,14 @@ def _apply_approved_purchase(db: Session, purchase: RechargePurchase, transactio
     purchase.wompi_status = transaction.get("status")
     purchase.wompi_payment_method = transaction.get("payment_method_type")
     purchase.updated_at = _now()
-    auth_service.update_user_balance(db, purchase.user_id, purchase.guayabits)
+    auth_service.update_user_balance(
+        db,
+        purchase.user_id,
+        purchase.guayabits,
+        movement_type="recarga",
+        concept=f"Recarga aprobada — paquete #{purchase.package_id}",
+        reference_id=purchase.id,
+    )
 
 
 def process_transaction_update(db: Session, transaction: dict) -> RechargePurchase | None:

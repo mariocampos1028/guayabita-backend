@@ -509,7 +509,17 @@ def contribute_to_tournament(db: Session, user_id: int, amount: float) -> User:
             detail=f"Saldo insuficiente. Disponible: {user.balance:.0f} Guayabits",
         )
 
-    user.balance -= amount
+    from app.services.balance_movement_service import apply_balance_change
+
+    apply_balance_change(
+        db,
+        user.id,
+        delta=-amount,
+        movement_type="torneo",
+        concept=f"Aporte al torneo — {active.title}",
+        reference_id=active.id,
+        commit=False,
+    )
     user.tournament_balance += amount
     db.commit()
     db.refresh(user)

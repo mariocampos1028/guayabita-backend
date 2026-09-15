@@ -22,6 +22,9 @@ from app.routers.payments import router as payments_router
 from app.routers.store import router as store_router
 from app.routers.support import router as support_router
 from app.routers.admin_users import router as admin_users_router
+from app.routers.referrals import router as referrals_router
+from app.routers.platform_settings import router as platform_settings_router
+from app.routers.balance_movements import router as balance_movements_router
 
 load_dotenv()
 
@@ -73,6 +76,9 @@ app.include_router(payments_router)
 app.include_router(store_router)
 app.include_router(support_router)
 app.include_router(admin_users_router)
+app.include_router(referrals_router)
+app.include_router(platform_settings_router)
+app.include_router(balance_movements_router)
 
 
 @app.get("/")

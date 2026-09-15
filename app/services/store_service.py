@@ -55,7 +55,19 @@ def _credit_order_guayabits(db: Session, order: StoreOrder) -> None:
     user = db.query(User).filter(User.id == order.user_id).with_for_update().first()
     if not user or user.is_admin:
         return
-    user.balance += order.guayabits_reward * order.quantity
+
+    from app.services.balance_movement_service import apply_balance_change
+
+    amount = order.guayabits_reward * order.quantity
+    apply_balance_change(
+        db,
+        user.id,
+        delta=amount,
+        movement_type="tienda_regalo",
+        concept=f"Regalo por compra en tienda — {order.product_name}",
+        reference_id=order.id,
+        commit=False,
+    )
     order.guayabits_credited = True
 
 

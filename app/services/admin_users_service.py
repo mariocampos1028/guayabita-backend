@@ -68,7 +68,18 @@ def adjust_user_balance(
     if previous_balance == new_balance:
         raise HTTPException(status_code=400, detail="El saldo indicado es igual al actual")
 
+    from app.services.balance_movement_service import record_movement
+
     user.balance = new_balance
+    record_movement(
+        db,
+        user_id=user.id,
+        movement_type="soporte",
+        concept=f"Ajuste por soporte: {justification.strip()}",
+        previous_balance=previous_balance,
+        new_balance=new_balance,
+        reference_id=None,
+    )
     log = BalanceAdjustmentLog(
         user_id=user.id,
         admin_id=admin_id,

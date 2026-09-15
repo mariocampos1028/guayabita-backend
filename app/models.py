@@ -62,6 +62,7 @@ class RegisterRequest(BaseModel):
     phone: str = Field(..., min_length=7, max_length=30)
     address: str = Field(..., min_length=5, max_length=255)
     birth_date: date
+    referrer_id: int | None = None
 
     @field_validator("birth_date")
     @classmethod
@@ -203,6 +204,49 @@ class TokenResponse(BaseModel):
 class SessionResponse(BaseModel):
     user: UserResponse
     active_room: Optional[str] = None
+
+
+class SessionConfigResponse(BaseModel):
+    lobby_inactivity_minutes: int
+    verification_resend_cooldown_minutes: int
+
+
+class PlatformSettingsResponse(BaseModel):
+    lobby_inactivity_minutes: int
+    verification_resend_cooldown_minutes: int
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class PlatformSettingsUpdateRequest(BaseModel):
+    lobby_inactivity_minutes: int = Field(..., ge=1, le=120)
+    verification_resend_cooldown_minutes: int = Field(..., ge=1, le=60)
+
+
+# ── Movimientos de saldo ───────────────────────────────────────────────────────
+
+BalanceMovementType = Literal[
+    "registro",
+    "referido",
+    "tienda_regalo",
+    "soporte",
+    "recarga",
+    "partida_entrada",
+    "partida_resultado",
+    "torneo",
+]
+
+
+class BalanceMovementResponse(BaseModel):
+    id: int
+    movement_type: BalanceMovementType
+    concept: str
+    previous_balance: float
+    new_balance: float
+    delta: float
+    reference_id: int | None = None
+    created_at: datetime
+    model_config = {"from_attributes": True}
 
 
 # ── Salas ──────────────────────────────────────────────────────────────────────
@@ -560,3 +604,65 @@ class SupportTicketResponse(BaseModel):
     updated_at: datetime
     closed_at: datetime | None
     messages: list[SupportMessageResponse] = Field(default_factory=list)
+
+
+# ── Referidos ──────────────────────────────────────────────────────────────────
+
+ReferralStatus = Literal["pendiente", "activo"]
+
+
+class ReferralItemResponse(BaseModel):
+    id: int
+    username: str
+    email_masked: str
+    status: ReferralStatus
+    guayabits_rewarded: float
+    created_at: datetime
+    activated_at: datetime | None = None
+
+
+class ReferralDashboardResponse(BaseModel):
+    link: str
+    referral_link_generations: int
+    successful_referrals_count: int
+    rewarded_referrals_count: int
+    max_referrals: int
+    guayabits_per_referral: float
+    referrals_remaining: int
+    is_enabled: bool
+    referrals: list[ReferralItemResponse] = Field(default_factory=list)
+
+
+class ReferralLinkResponse(BaseModel):
+    link: str
+    referral_link_generations: int
+    successful_referrals_count: int
+    rewarded_referrals_count: int
+    max_referrals: int
+    guayabits_per_referral: float
+    referrals_remaining: int
+    is_enabled: bool
+
+
+class ReferralSettingsResponse(BaseModel):
+    max_referrals_per_user: int
+    guayabits_per_referral: float
+    is_enabled: bool
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class ReferralSettingsUpdateRequest(BaseModel):
+    max_referrals_per_user: int = Field(..., ge=0, le=1000)
+    guayabits_per_referral: float = Field(..., ge=0)
+    is_enabled: bool = True
+
+
+class ReferralPromoResponse(BaseModel):
+    is_enabled: bool
+    guayabits_per_referral: float
+
+
+class UsernameAvailabilityResponse(BaseModel):
+    available: bool
+    reason: str | None = None

@@ -222,6 +222,70 @@ def run_startup_migrations() -> None:
             WHERE p.product_id = m.product_id AND p.is_primary = TRUE
           )
         """,
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_link_generations INTEGER NOT NULL DEFAULT 0",
+        """
+        CREATE TABLE IF NOT EXISTS referral_settings (
+            id INTEGER PRIMARY KEY,
+            max_referrals_per_user INTEGER NOT NULL DEFAULT 10,
+            guayabits_per_referral DOUBLE PRECISION NOT NULL DEFAULT 1000,
+            is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "ALTER TABLE referral_settings ALTER COLUMN updated_at SET DEFAULT NOW()",
+        "UPDATE referral_settings SET updated_at = NOW() WHERE updated_at IS NULL",
+        """
+        INSERT INTO referral_settings (
+            id, max_referrals_per_user, guayabits_per_referral, is_enabled, updated_at
+        )
+        VALUES (1, 10, 1000, TRUE, NOW())
+        ON CONFLICT (id) DO NOTHING
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS referrals (
+            id SERIAL PRIMARY KEY,
+            referrer_id INTEGER NOT NULL REFERENCES users(id),
+            referred_user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+            status VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+            guayabits_rewarded DOUBLE PRECISION NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            activated_at TIMESTAMPTZ
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_referrals_referrer_id ON referrals(referrer_id)",
+        "CREATE INDEX IF NOT EXISTS ix_referrals_status ON referrals(status)",
+        """
+        CREATE TABLE IF NOT EXISTS platform_settings (
+            id INTEGER PRIMARY KEY,
+            lobby_inactivity_minutes INTEGER NOT NULL DEFAULT 3,
+            verification_resend_cooldown_minutes INTEGER NOT NULL DEFAULT 5,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "ALTER TABLE platform_settings ALTER COLUMN updated_at SET DEFAULT NOW()",
+        """
+        INSERT INTO platform_settings (
+            id, lobby_inactivity_minutes, verification_resend_cooldown_minutes, updated_at
+        )
+        VALUES (1, 3, 5, NOW())
+        ON CONFLICT (id) DO NOTHING
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS balance_movements (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            movement_type VARCHAR(30) NOT NULL,
+            concept VARCHAR(255) NOT NULL,
+            previous_balance DOUBLE PRECISION NOT NULL,
+            new_balance DOUBLE PRECISION NOT NULL,
+            delta DOUBLE PRECISION NOT NULL,
+            reference_id INTEGER,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_balance_movements_user_id ON balance_movements(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_balance_movements_movement_type ON balance_movements(movement_type)",
+        "CREATE INDEX IF NOT EXISTS ix_balance_movements_created_at ON balance_movements(created_at)",
     ]
     with engine.begin() as conn:
         for sql in statements:

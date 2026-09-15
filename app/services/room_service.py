@@ -161,7 +161,13 @@ def start_room(code: str, user_id: int, balances: dict[int, float], db: Session)
                 400,
                 f"El jugador {p['username']} no tiene saldo suficiente para el case (${case_value:.0f})",
             )
-        auth_service.update_user_balance(db, uid, -case_value)
+        auth_service.update_user_balance(
+            db,
+            uid,
+            -case_value,
+            movement_type="partida_entrada",
+            concept=f"Entrada a partida — case ${case_value:.0f}",
+        )
 
     players_config = [
         PC(name=p["username"], balance=balances.get(p["user_id"], 5000))

@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
@@ -15,9 +16,8 @@ JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS", "7"))
 INITIAL_BALANCE = float(os.getenv("INITIAL_BALANCE", "5000"))
 DEFAULT_AVATAR_URL = os.getenv("DEFAULT_AVATAR_URL", "/images/avatar-default.png")
-LOBBY_SESSION_TTL = 60 * 3  # 3 minutos de inactividad en el lobby
-
 EMAIL_VERIFY_PREFIX = "email_verify:"
+VERIFY_RESEND_COOLDOWN_PREFIX = "verify_resend_cooldown:"
 PASSWORD_RESET_PREFIX = "password_reset:"
 PASSWORD_RESET_RATE_PREFIX = "pwd_reset_rate:"
 PASSWORD_RESET_RATE_MAX = 3
@@ -77,19 +77,26 @@ def decode_token(token: str) -> int:
 
 # ── Sesión en Redis (solo lobby) ───────────────────────────────────────────────
 
-def create_lobby_session(token: str, user_id: int) -> None:
-    """Crea la llave de sesión en Redis al hacer login. TTL: 5 min."""
-    _get_redis().set(_session_key(token), str(user_id), ex=LOBBY_SESSION_TTL)
+def _lobby_session_ttl(db: Session) -> int:
+    from app.services.platform_settings_service import get_lobby_session_ttl_seconds
+
+    return get_lobby_session_ttl_seconds(db)
 
 
-def refresh_lobby_session(token: str) -> bool:
+def create_lobby_session(token: str, user_id: int, db: Session) -> None:
+    """Crea la llave de sesión en Redis al hacer login."""
+    ttl = _lobby_session_ttl(db)
+    _get_redis().set(_session_key(token), str(user_id), ex=ttl)
+
+
+def refresh_lobby_session(token: str, db: Session) -> bool:
     """Renueva el TTL de la sesión. Devuelve False si ya expiró."""
     redis = _get_redis()
     key = _session_key(token)
     exists = redis.get(key)
     if exists is None:
         return False
-    redis.expire(key, LOBBY_SESSION_TTL)
+    redis.expire(key, _lobby_session_ttl(db))
     return True
 
 
@@ -105,6 +112,31 @@ def check_lobby_session(token: str) -> bool:
 
 # ── Usuarios ───────────────────────────────────────────────────────────────────
 
+_USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_]+$")
+
+
+def validate_username_format(username: str) -> str | None:
+    """Devuelve un código de razón si el username no es válido; None si es válido."""
+    value = username.strip()
+    if len(value) < 3:
+        return "too_short"
+    if len(value) > 50:
+        return "too_long"
+    if not _USERNAME_PATTERN.fullmatch(value):
+        return "invalid_chars"
+    return None
+
+
+def check_username_available(db: Session, username: str) -> tuple[bool, str | None]:
+    reason = validate_username_format(username)
+    if reason is not None:
+        return False, reason
+    exists = db.query(User).filter(User.username == username.strip()).first()
+    if exists is not None:
+        return False, "taken"
+    return True, None
+
+
 def register_user(
     db: Session,
     username: str,
@@ -116,11 +148,18 @@ def register_user(
     phone: str,
     address: str,
     birth_date,
+    referrer_id: int | None = None,
 ) -> User:
+    from app.services.email_validation import validate_registration_email
+    from app.services.referral_service import attach_referral_on_register, phone_exists
+
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=400, detail="El nombre de usuario ya existe")
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="El correo ya está registrado")
+    validate_registration_email(email)
+    if phone_exists(db, phone):
+        raise HTTPException(status_code=400, detail="El número de celular ya está registrado")
 
     user = User(
         username=username,
@@ -138,6 +177,20 @@ def register_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    from app.services.balance_movement_service import record_movement
+
+    record_movement(
+        db,
+        user_id=user.id,
+        movement_type="registro",
+        concept="Saldo inicial por registro",
+        previous_balance=0.0,
+        new_balance=user.balance,
+    )
+    db.commit()
+
+    attach_referral_on_register(db, referrer_id=referrer_id, referred_user_id=user.id)
     return user
 
 
@@ -159,23 +212,52 @@ def get_user_by_id(db: Session, user_id: int) -> User:
     return user
 
 
-def update_user_balance(db: Session, user_id: int, delta: float) -> User:
-    """Aplica un delta al saldo del usuario y persiste en PostgreSQL."""
-    user = get_user_by_id(db, user_id)
-    user.balance += delta
-    db.commit()
-    db.refresh(user)
-    return user
+def update_user_balance(
+    db: Session,
+    user_id: int,
+    delta: float,
+    *,
+    movement_type: str,
+    concept: str,
+    reference_id: int | None = None,
+    commit: bool = True,
+) -> User:
+    """Aplica un delta al saldo del usuario y registra el movimiento."""
+    from app.services.balance_movement_service import apply_balance_change
+
+    return apply_balance_change(
+        db,
+        user_id,
+        delta=delta,
+        movement_type=movement_type,
+        concept=concept,
+        reference_id=reference_id,
+        commit=commit,
+    )
 
 
-def set_user_balance(db: Session, user_id: int, balance: float, *, commit: bool = True) -> User:
-    """Establece el saldo absoluto del usuario (usado al cerrar una partida)."""
-    user = get_user_by_id(db, user_id)
-    user.balance = balance
-    if commit:
-        db.commit()
-        db.refresh(user)
-    return user
+def set_user_balance(
+    db: Session,
+    user_id: int,
+    balance: float,
+    *,
+    movement_type: str,
+    concept: str,
+    reference_id: int | None = None,
+    commit: bool = True,
+) -> User:
+    """Establece el saldo absoluto del usuario y registra el movimiento."""
+    from app.services.balance_movement_service import apply_balance_change
+
+    return apply_balance_change(
+        db,
+        user_id,
+        new_balance=balance,
+        movement_type=movement_type,
+        concept=concept,
+        reference_id=reference_id,
+        commit=commit,
+    )
 
 
 # ── Verificación de correo ─────────────────────────────────────────────────────
@@ -200,23 +282,57 @@ def verify_email_with_token(db: Session, token: str) -> User:
     if user_id_str is None:
         raise HTTPException(status_code=400, detail="Enlace inválido o expirado")
 
+    from app.services.referral_service import activate_referral_on_email_verify
+
     user = get_user_by_id(db, int(user_id_str))
     if not user.email_verified:
         user.email_verified = True
         user.email_verified_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(user)
+        activate_referral_on_email_verify(db, user.id)
 
     redis.delete(key)
     return user
 
 
-def issue_verification_token_for_user(db: Session, user_id: int) -> str:
-    """Devuelve un token nuevo para reenviar verificación."""
+def _verify_resend_cooldown_key(user_id: int) -> str:
+    return f"{VERIFY_RESEND_COOLDOWN_PREFIX}{user_id}"
+
+
+def mark_verification_email_sent(user_id: int, db: Session) -> None:
+    from app.services.platform_settings_service import get_verification_resend_cooldown_seconds
+
+    ttl = get_verification_resend_cooldown_seconds(db)
+    _get_redis().set(_verify_resend_cooldown_key(user_id), "1", ex=ttl)
+
+
+def prepare_verification_resend(db: Session, user_id: int) -> str:
+    """Valida cooldown y devuelve un token nuevo para reenviar verificación."""
+    from app.services.platform_settings_service import get_verification_resend_cooldown_seconds
+
     user = get_user_by_id(db, user_id)
     if user.email_verified:
         raise HTTPException(status_code=400, detail="El correo ya está verificado")
-    return create_email_verification_token(user.id)
+
+    redis = _get_redis()
+    cooldown_key = _verify_resend_cooldown_key(user_id)
+    if redis.get(cooldown_key) is not None:
+        remaining = redis.ttl(cooldown_key)
+        if remaining < 0:
+            remaining = get_verification_resend_cooldown_seconds(db)
+        minutes = max(1, (remaining + 59) // 60)
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Ya enviamos un correo de verificación. "
+                f"Para volver a enviarlo espera {minutes} minuto(s) e inténtalo de nuevo."
+            ),
+        )
+
+    token = create_email_verification_token(user.id)
+    mark_verification_email_sent(user_id, db)
+    return token
 
 
 # ── Restablecimiento de contraseña ─────────────────────────────────────────────
@@ -281,7 +397,11 @@ def update_user_profile(
     phone: str,
     address: str,
 ) -> User:
+    from app.services.referral_service import phone_exists
+
     user = get_user_by_id(db, user_id)
+    if phone_exists(db, phone, exclude_user_id=user_id):
+        raise HTTPException(status_code=400, detail="El número de celular ya está registrado")
     user.first_name = first_name
     user.last_name = last_name
     user.phone = phone

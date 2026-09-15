@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request, HTTPException,
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from app.db.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_jwt_only
 from app.db.models_db import User
 from app.models import (
     RegisterRequest,
@@ -17,6 +17,7 @@ from app.models import (
     ResetPasswordRequest,
     UpdateProfileRequest,
     ChangePasswordRequest,
+    UsernameAvailabilityResponse,
 )
 from app.services import auth_service
 from app.services import room_service
@@ -116,6 +117,12 @@ def reset_password(
     return MessageResponse(message="Contraseña actualizada correctamente")
 
 
+@router.get("/check-username", response_model=UsernameAvailabilityResponse)
+def check_username(username: str, db: Session = Depends(get_db)):
+    available, reason = auth_service.check_username_available(db, username)
+    return UsernameAvailabilityResponse(available=available, reason=reason)
+
+
 @router.post("/register", response_model=TokenResponse, status_code=201)
 def register(
     req: RegisterRequest,
@@ -132,10 +139,12 @@ def register(
         phone=req.phone,
         address=req.address,
         birth_date=req.birth_date,
+        referrer_id=req.referrer_id,
     )
     token = auth_service.create_token(user.id)
-    auth_service.create_lobby_session(token, user.id)
+    auth_service.create_lobby_session(token, user.id, db)
     verify_token = auth_service.create_email_verification_token(user.id)
+    auth_service.mark_verification_email_sent(user.id, db)
     background_tasks.add_task(
         _dispatch_welcome_email,
         user.email,
@@ -149,7 +158,7 @@ def register(
 @router.post("/login", response_model=TokenResponse)
 def login(req: LoginRequest, db: Session = Depends(get_db)):
     user, token = auth_service.login_user(db, req.username, req.password)
-    auth_service.create_lobby_session(token, user.id)
+    auth_service.create_lobby_session(token, user.id, db)
     return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
 
 
@@ -165,18 +174,18 @@ def resend_verification(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    verify_token = auth_service.issue_verification_token_for_user(db, current_user.id)
+    verify_token = auth_service.prepare_verification_resend(db, current_user.id)
     background_tasks.add_task(
         _dispatch_verification_email,
         current_user.email,
         current_user.username,
         verify_token,
     )
-    return MessageResponse(message="Correo de verificación enviado")
+    return MessageResponse(message="Correo de verificación enviado. Revisa tu bandeja de entrada.")
 
 
 @router.post("/logout")
-def logout(request: Request, current_user: User = Depends(get_current_user)):
+def logout(request: Request, current_user: User = Depends(get_current_user_jwt_only)):
     token = _extract_token(request)
     if token:
         auth_service.delete_lobby_session(token)
@@ -266,17 +275,18 @@ def leaderboard(
 @router.get("/session", response_model=SessionResponse)
 def session(
     request: Request,
-    current_user: User = Depends(get_current_user),
+    refresh: bool = False,
+    current_user: User = Depends(get_current_user_jwt_only),
     db: Session = Depends(get_db),
 ):
-    """Verifica sesión activa y renueva TTL. El frontend llama a esto
-    al cargar la app y en el polling del lobby para mantener la sesión viva."""
+    """Verifica sesión activa. Solo renueva TTL cuando refresh=true."""
     token = _extract_token(request)
 
     if token:
-        still_active = auth_service.refresh_lobby_session(token)
-        if not still_active:
+        if not auth_service.check_lobby_session(token):
             raise HTTPException(status_code=401, detail="Sesión expirada por inactividad")
+        if refresh:
+            auth_service.refresh_lobby_session(token, db)
 
     active_room = room_service.get_user_active_room(current_user.id)
     fresh_user = auth_service.get_user_by_id(db, current_user.id)

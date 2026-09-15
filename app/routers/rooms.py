@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db.models_db import User
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_verified_user, ensure_email_verified
 from app.models import CreateRoomRequest, RoomResponse, RoomSummary, GameState
 from app.services import room_service, auth_service
 
@@ -17,6 +17,7 @@ def _ensure_player_user(user: User) -> None:
             status_code=403,
             detail="Los administradores no pueden crear ni unirse a salas",
         )
+    ensure_email_verified(user)
 
 
 def _format_room(room: dict) -> RoomResponse:
@@ -41,7 +42,7 @@ def _format_room(room: dict) -> RoomResponse:
 @router.post("/create", response_model=RoomResponse, status_code=201)
 def create_room(
     req: CreateRoomRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
 ):
     _ensure_player_user(current_user)
     min_balance = req.case_value * 2
@@ -57,7 +58,7 @@ def create_room(
 @router.post("/join/{code}", response_model=RoomResponse)
 def join_room(
     code: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
 ):
     _ensure_player_user(current_user)
     room = room_service.get_room(code.upper())
@@ -91,7 +92,7 @@ def get_room(
 @router.post("/{code}/start", response_model=RoomResponse)
 def start_room(
     code: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
     db: Session = Depends(get_db),
 ):
     code = code.upper()

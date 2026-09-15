@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db.models_db import User, GameHistory
-from app.dependencies import get_current_user
+from app.dependencies import get_current_verified_user
 from app.models import GameState, PlaceBetRequest
 from app.services import room_service, auth_service
 from app.services import game_audit_service
@@ -80,7 +80,14 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
         user_id = player_ids[i] if i < len(player_ids) else None
         if user_id:
             # Saldo final en juego = saldo real en BD (case ya descontado al iniciar)
-            auth_service.set_user_balance(db, user_id, player.balance, commit=False)
+            auth_service.set_user_balance(
+                db,
+                user_id,
+                player.balance,
+                movement_type="partida_resultado",
+                concept=f"Resultado de partida {code}",
+                commit=False,
+            )
 
         if state.winner and state.winner.id == player.id:
             winner_db_id = player_ids[i] if i < len(player_ids) else None
@@ -123,7 +130,7 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
 @router.get("/{code}/state", response_model=GameState)
 def get_state(
     code: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
     db: Session = Depends(get_db),
 ):
     _ = current_user
@@ -137,7 +144,7 @@ def get_state(
 @router.post("/{code}/roll", response_model=GameState)
 def roll_dice(
     code: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
     db: Session = Depends(get_db),
 ):
     code = code.upper()
@@ -162,7 +169,7 @@ def roll_dice(
 def place_bet(
     code: str,
     req: PlaceBetRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
     db: Session = Depends(get_db),
 ):
     code = code.upper()
@@ -180,7 +187,7 @@ def place_bet(
 @router.post("/{code}/next-turn", response_model=GameState)
 def next_turn(
     code: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
     db: Session = Depends(get_db),
 ):
     code = code.upper()
@@ -198,7 +205,7 @@ def next_turn(
 @router.post("/{code}/leave", response_model=GameState)
 def leave_game(
     code: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
     db: Session = Depends(get_db),
 ):
     code = code.upper()
