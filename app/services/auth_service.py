@@ -148,10 +148,11 @@ def register_user(
     phone: str,
     address: str,
     birth_date,
+    id_document: str,
     referrer_id: int | None = None,
 ) -> User:
     from app.services.email_validation import validate_registration_email
-    from app.services.referral_service import attach_referral_on_register, phone_exists
+    from app.services.referral_service import attach_referral_on_register, phone_exists, id_document_exists
 
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=400, detail="El nombre de usuario ya existe")
@@ -160,6 +161,8 @@ def register_user(
     validate_registration_email(email)
     if phone_exists(db, phone):
         raise HTTPException(status_code=400, detail="El número de celular ya está registrado")
+    if id_document_exists(db, id_document):
+        raise HTTPException(status_code=400, detail="Número de documento de identidad ya registrado")
 
     user = User(
         username=username,
@@ -171,6 +174,7 @@ def register_user(
         phone=phone,
         address=address,
         birth_date=birth_date,
+        id_document=id_document,
         avatar_url=DEFAULT_AVATAR_URL,
         last_login_at=datetime.now(timezone.utc),
     )

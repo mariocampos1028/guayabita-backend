@@ -242,3 +242,14 @@ def phone_exists(db: Session, phone: str, *, exclude_user_id: int | None = None)
     if exclude_user_id is not None:
         query = query.filter(User.id != exclude_user_id)
     return query.first() is not None
+
+
+def id_document_exists(db: Session, id_document: str, *, exclude_user_id: int | None = None) -> bool:
+    target = id_document.strip()
+    if not target:
+        return False
+
+    query = db.query(User.id).filter(User.id_document == target)
+    if exclude_user_id is not None:
+        query = query.filter(User.id != exclude_user_id)
+    return query.first() is not None

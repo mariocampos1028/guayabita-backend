@@ -139,6 +139,7 @@ def register(
         phone=req.phone,
         address=req.address,
         birth_date=req.birth_date,
+        id_document=req.id_document,
         referrer_id=req.referrer_id,
     )
     token = auth_service.create_token(user.id)

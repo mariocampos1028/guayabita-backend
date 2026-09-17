@@ -17,6 +17,7 @@ class User(Base):
     address: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    id_document: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     balance: Mapped[float] = mapped_column(Float, default=5000.0, nullable=False)
     tournament_balance: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)

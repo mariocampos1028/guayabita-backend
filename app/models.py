@@ -1,4 +1,5 @@
 from typing import Literal, Optional
+import re
 from datetime import date, datetime
 from pydantic import BaseModel, Field, EmailStr, field_validator
 
@@ -56,13 +57,23 @@ class PlaceBetRequest(BaseModel):
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
-    password: str = Field(..., min_length=6, max_length=100)
+    password: str = Field(..., min_length=10, max_length=100)
     first_name: str = Field(..., min_length=1, max_length=80)
     last_name: str = Field(..., min_length=1, max_length=80)
     phone: str = Field(..., min_length=7, max_length=30)
     address: str = Field(..., min_length=5, max_length=255)
     birth_date: date
+    id_document: str = Field(..., min_length=6, max_length=20)
     referrer_id: int | None = None
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, value: str) -> str:
+        if not re.search(r"[A-Z]", value):
+            raise ValueError("La contraseña debe tener al menos una letra mayúscula")
+        if not re.search(r"[^a-zA-Z0-9]", value):
+            raise ValueError("La contraseña debe tener al menos un carácter especial")
+        return value
 
     @field_validator("birth_date")
     @classmethod
@@ -83,7 +94,16 @@ class UpdateProfileRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(..., min_length=6, max_length=100)
-    new_password: str = Field(..., min_length=6, max_length=100)
+    new_password: str = Field(..., min_length=10, max_length=100)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, value: str) -> str:
+        if not re.search(r"[A-Z]", value):
+            raise ValueError("La contraseña debe tener al menos una letra mayúscula")
+        if not re.search(r"[^a-zA-Z0-9]", value):
+            raise ValueError("La contraseña debe tener al menos un carácter especial")
+        return value
 
 
 class LoginRequest(BaseModel):
@@ -104,6 +124,7 @@ class UserResponse(BaseModel):
     address: str
     birth_date: date | None
     avatar_url: str | None
+    id_document: str | None
     is_admin: bool
     last_login_at: datetime | None
 
@@ -124,7 +145,16 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     token: str = Field(..., min_length=10, max_length=200)
-    new_password: str = Field(..., min_length=6, max_length=100)
+    new_password: str = Field(..., min_length=10, max_length=100)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, value: str) -> str:
+        if not re.search(r"[A-Z]", value):
+            raise ValueError("La contraseña debe tener al menos una letra mayúscula")
+        if not re.search(r"[^a-zA-Z0-9]", value):
+            raise ValueError("La contraseña debe tener al menos un carácter especial")
+        return value
 
 
 class LeaderboardEntry(BaseModel):

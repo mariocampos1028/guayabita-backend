@@ -286,6 +286,8 @@ def run_startup_migrations() -> None:
         "CREATE INDEX IF NOT EXISTS ix_balance_movements_user_id ON balance_movements(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_balance_movements_movement_type ON balance_movements(movement_type)",
         "CREATE INDEX IF NOT EXISTS ix_balance_movements_created_at ON balance_movements(created_at)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS id_document VARCHAR(20)",
+        "CREATE INDEX IF NOT EXISTS ix_users_id_document ON users(id_document)",
     ]
     with engine.begin() as conn:
         for sql in statements:
