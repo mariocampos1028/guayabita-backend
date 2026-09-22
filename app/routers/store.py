@@ -25,7 +25,9 @@ from app.models import (
 )
 from app.config.store_categories import STORE_CATEGORIES
 from app.services import guayabits_tier_service, store_service
+from app.services import rate_limit_service
 from app.services import response_cache_service
+from app.services.r2_storage_service import CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PRIVATE
 from app.services.store_media_service import get_store_object
 
 router = APIRouter(tags=["store"])
@@ -114,6 +116,13 @@ def create_order(
     current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
+    rate_limit_service.check_rate_limit(
+        "create_order",
+        str(current_user.id),
+        max_requests=5,
+        window_seconds=60,
+        message="Demasiados pedidos en poco tiempo. Espera un momento.",
+    )
     return store_service.create_order(
         db,
         current_user,
@@ -166,7 +175,7 @@ def user_order_receipt(
 ):
     key, _ = store_service.get_user_order_receipt(db, order_id, current_user.id)
     data, content_type = get_store_object(key)
-    return Response(data, media_type=content_type)
+    return Response(data, media_type=content_type, headers={"Cache-Control": CACHE_CONTROL_PRIVATE})
 
 
 @router.post("/store/orders/{order_id}/correction", response_model=StoreOrderResponse)
@@ -200,7 +209,7 @@ def submit_order_correction(
 @router.get("/store/media/{key:path}")
 def media(key: str):
     data, content_type = get_store_object(key)
-    return Response(data, media_type=content_type)
+    return Response(data, media_type=content_type, headers={"Cache-Control": CACHE_CONTROL_IMMUTABLE})
 
 
 @router.get("/admin/store/guayabits-tiers", response_model=list[StoreGuayabitsRewardTierResponse])
@@ -506,7 +515,7 @@ def order_receipt(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Comprobante no encontrado")
     data, content_type = get_store_object(order.payment_receipt_key)
-    return Response(data, media_type=content_type)
+    return Response(data, media_type=content_type, headers={"Cache-Control": CACHE_CONTROL_PRIVATE})
 
 
 @router.patch("/admin/store/orders/{order_id}/status", response_model=StoreOrderResponse)

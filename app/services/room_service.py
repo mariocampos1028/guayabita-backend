@@ -27,6 +27,72 @@ redis = InstrumentedRedis(Redis(
     token=os.getenv("UPSTASH_REDIS_REST_TOKEN", ""),
 ))
 
+# Une un jugador a una sala en una sola ejecución server-side (lee, valida y
+# escribe sin volver a Python entre medio), para que dos JOIN simultáneos no
+# puedan pisarse el uno al otro ni superar MAX_PLAYERS. El GET -> modificar en
+# Python -> SET que había antes tenía una ventana real: validado con una prueba
+# de concurrencia contra Upstash, donde varios hilos recibían "unido" pero solo
+# uno sobrevivía por sobreescritura silenciosa.
+_JOIN_ROOM_LUA = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return cjson.encode({error = 'not_found'})
+end
+
+local room = cjson.decode(raw)
+local user_id = tonumber(ARGV[1])
+local max_players = tonumber(ARGV[5])
+
+if room.status ~= 'waiting' then
+  return cjson.encode({error = 'already_started'})
+end
+
+if room.players == nil then
+  room.players = {}
+end
+
+local count = 0
+local already_in = false
+for _, p in ipairs(room.players) do
+  count = count + 1
+  if tonumber(p.user_id) == user_id then
+    already_in = true
+  end
+end
+
+if already_in then
+  return cjson.encode(room)
+end
+
+if count >= max_players then
+  return cjson.encode({error = 'room_full'})
+end
+
+table.insert(room.players, {user_id = user_id, username = ARGV[2], ready = true})
+count = count + 1
+
+if count > 1 then
+  if room.wait_expires_at == nil or room.wait_expires_at == cjson.null then
+    room.wait_expires_at = ARGV[6]
+  end
+else
+  room.wait_expires_at = nil
+end
+
+local encoded = cjson.encode(room)
+redis.call('SET', KEYS[1], encoded, 'EX', tonumber(ARGV[3]))
+
+if room.status == 'waiting' and count < max_players then
+  redis.call('SADD', KEYS[3], ARGV[7])
+else
+  redis.call('SREM', KEYS[3], ARGV[7])
+end
+
+redis.call('SET', KEYS[2], ARGV[7], 'EX', tonumber(ARGV[4]))
+
+return encoded
+"""
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -143,26 +209,26 @@ def create_room(creator_id: int, creator_username: str, case_value: float) -> di
 
 
 def join_room(code: str, user_id: int, username: str) -> dict:
-    """Un usuario se une a una sala existente."""
-    raw = redis.get(_room_key(code))
-    if not raw:
+    """Un usuario se une a una sala existente (atómico: ver _JOIN_ROOM_LUA)."""
+    wait_expires_at = (_now() + timedelta(seconds=WAIT_TIMEOUT_SECONDS)).isoformat()
+    raw_result = redis.eval(
+        _JOIN_ROOM_LUA,
+        keys=[_room_key(code), _user_room_key(user_id), WAITING_ROOMS_KEY],
+        args=[
+            str(user_id), username, str(ROOM_TTL), str(USER_ROOM_TTL),
+            str(MAX_PLAYERS), wait_expires_at, code,
+        ],
+    )
+    result = json.loads(raw_result)
+
+    error = result.get("error")
+    if error == "not_found":
         raise HTTPException(404, "Sala no encontrada o expirada")
-
-    room = json.loads(raw)
-    if room["status"] != "waiting":
+    if error == "already_started":
         raise HTTPException(400, "La partida ya comenzó o terminó")
-    if len(room["players"]) >= MAX_PLAYERS:
+    if error == "room_full":
         raise HTTPException(400, "La sala está llena (máximo 10 jugadores)")
-    if any(p["user_id"] == user_id for p in room["players"]):
-        # Ya está en la sala — devuelve el estado actual sin agregar de nuevo
-        return room
-
-    room["players"].append({"user_id": user_id, "username": username, "ready": True})
-    _sync_wait_timer(room)
-    redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
-    _sync_waiting_room_index(room)
-    redis.set(_user_room_key(user_id), code, ex=USER_ROOM_TTL)
-    return room
+    return result
 
 
 def get_room(code: str) -> dict:

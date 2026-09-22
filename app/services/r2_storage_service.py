@@ -14,6 +14,13 @@ from app.observability.metrics import metrics
 
 logger = logging.getLogger(__name__)
 
+# Cache-Control a fijar como metadato del objeto en R2, para que viaje la
+# cabecera correcta tanto si se sirve directo desde la URL pública de R2 como
+# si se sirve por el proxy de la API cuando R2_PUBLIC_URL no está configurada.
+CACHE_CONTROL_IMMUTABLE = "public, max-age=31536000, immutable"  # nombre de archivo único, nunca se reemplaza
+CACHE_CONTROL_SHORT = "public, max-age=3600"  # misma ruta se reemplaza (avatar, imagen de torneo)
+CACHE_CONTROL_PRIVATE = "private, no-store"  # comprobantes de pago: nunca en caché
+
 AVATAR_PREFIX = "perfiles"
 
 
@@ -94,16 +101,27 @@ class R2StorageService:
         finally:
             self._record("delete", outcome, started)
 
-    def upload_object(self, key: str, data: bytes, content_type: str) -> None:
-        """Sube un objeto al bucket."""
+    def upload_object(
+        self, key: str, data: bytes, content_type: str, *, cache_control: str | None = None,
+    ) -> None:
+        """Sube un objeto al bucket.
+
+        ``cache_control`` se guarda como metadato del objeto: R2 lo devuelve
+        como cabecera ``Cache-Control`` cuando el archivo se sirve desde la
+        URL pública, sin que la API tenga que intervenir.
+        """
         started = perf_counter()
         outcome = "ok"
         try:
+            extra: dict = {}
+            if cache_control:
+                extra["CacheControl"] = cache_control
             self._client.put_object(
                 Bucket=self._bucket,
                 Key=key,
                 Body=data,
                 ContentType=content_type,
+                **extra,
             )
         except Exception:
             outcome = "error"

@@ -23,7 +23,11 @@ from app.models import (
     AdvertisementResponse,
     ADVERTISEMENT_SECTIONS,
 )
-from app.services.r2_storage_service import get_r2_storage_service, R2StorageService
+from app.services.r2_storage_service import (
+    CACHE_CONTROL_IMMUTABLE,
+    get_r2_storage_service,
+    R2StorageService,
+)
 from app.config.r2_settings import r2_settings
 
 logger = logging.getLogger(__name__)
@@ -167,7 +171,7 @@ def upload_banner(db: Session, file: UploadFile, data: bytes) -> AdvertisementBa
 
     # Subir a R2 primero; si falla, no guardamos nada en BD
     try:
-        r2.upload_object(object_key, data, "image/webp")
+        r2.upload_object(object_key, data, "image/webp", cache_control=CACHE_CONTROL_IMMUTABLE)
     except Exception as exc:
         logger.exception("Error al subir banner a R2: %s", object_key)
         raise HTTPException(

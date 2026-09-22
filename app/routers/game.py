@@ -7,6 +7,7 @@ from app.dependencies import get_current_verified_user
 from app.models import GameState, PlaceBetRequest
 from app.services import room_service, auth_service
 from app.services import game_audit_service
+from app.services import rate_limit_service
 from app.services import tournament_service
 import app.game_logic as logic
 
@@ -178,6 +179,13 @@ def place_bet(
     current_user: User = Depends(get_current_verified_user),
     db: Session = Depends(get_db),
 ):
+    rate_limit_service.check_rate_limit(
+        "place_bet",
+        str(current_user.id),
+        max_requests=30,
+        window_seconds=60,
+        message="Demasiadas apuestas en poco tiempo. Espera un momento.",
+    )
     code = code.upper()
     state = _load_state_with_timeout(code)
     _validate_turn(code, current_user, state)

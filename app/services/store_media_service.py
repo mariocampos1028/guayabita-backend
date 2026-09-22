@@ -7,8 +7,13 @@ import secrets
 
 from fastapi import HTTPException, UploadFile
 
-from app.services.image_processing import process_store_webp
-from app.services.r2_storage_service import get_r2_storage_service, store_public_url
+from app.services.image_processing import process_prize_webp, process_store_webp
+from app.services.r2_storage_service import (
+    CACHE_CONTROL_IMMUTABLE,
+    CACHE_CONTROL_PRIVATE,
+    get_r2_storage_service,
+    store_public_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +52,7 @@ def upload_product_media(product_id: int, file: UploadFile) -> tuple[str, str, s
 
     key = f"tienda/productos/{product_id}/{secrets.token_hex(12)}.{extension}"
     try:
-        get_r2_storage_service().upload_object(key, data, output_type)
+        get_r2_storage_service().upload_object(key, data, output_type, cache_control=CACHE_CONTROL_IMMUTABLE)
     except Exception as exc:
         logger.exception("No fue posible subir medio del producto %s", product_id)
         raise HTTPException(status_code=500, detail="No fue posible almacenar el archivo") from exc
@@ -63,7 +68,7 @@ def upload_payment_receipt(order_reference: str, file: UploadFile) -> str:
         data, extension, output_type = raw, "pdf", "application/pdf"
     key = f"tienda/comprobantes/{order_reference}.{extension}"
     try:
-        get_r2_storage_service().upload_object(key, data, output_type)
+        get_r2_storage_service().upload_object(key, data, output_type, cache_control=CACHE_CONTROL_PRIVATE)
     except Exception as exc:
         logger.exception("No fue posible subir comprobante %s", order_reference)
         raise HTTPException(status_code=500, detail="No fue posible almacenar el comprobante") from exc

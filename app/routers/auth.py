@@ -20,10 +20,12 @@ from app.models import (
     UsernameAvailabilityResponse,
 )
 from app.services import auth_service
+from app.services import rate_limit_service
 from app.services import response_cache_service
 from app.services import room_service
 from app.services import tournament_service
 from app.services.avatar_service import upload_user_avatar, delete_user_avatar, get_user_avatar_bytes
+from app.services.r2_storage_service import CACHE_CONTROL_SHORT
 from app.emails import (
     send_password_changed_email,
     send_reset_password_email,
@@ -128,8 +130,16 @@ def check_username(username: str, db: Session = Depends(get_db)):
 def register(
     req: RegisterRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    rate_limit_service.check_rate_limit(
+        "register",
+        rate_limit_service.client_ip(request),
+        max_requests=5,
+        window_seconds=3600,
+        message="Demasiados registros desde esta conexión. Intenta de nuevo más tarde.",
+    )
     user = auth_service.register_user(
         db,
         req.username,
@@ -159,6 +169,13 @@ def register(
 
 @router.post("/login", response_model=TokenResponse)
 def login(req: LoginRequest, db: Session = Depends(get_db)):
+    rate_limit_service.check_rate_limit(
+        "login",
+        req.username.strip().lower(),
+        max_requests=10,
+        window_seconds=300,
+        message="Demasiados intentos de inicio de sesión. Espera unos minutos.",
+    )
     user, token = auth_service.login_user(db, req.username, req.password)
     auth_service.create_lobby_session(token, user.id, db)
     return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
@@ -233,6 +250,13 @@ def upload_avatar(
     db: Session = Depends(get_db),
 ):
     """Sube o reemplaza la foto de perfil del usuario autenticado."""
+    rate_limit_service.check_rate_limit(
+        "upload_avatar",
+        str(current_user.id),
+        max_requests=5,
+        window_seconds=60,
+        message="Demasiadas subidas de imagen. Espera un momento e intenta de nuevo.",
+    )
     public_url = upload_user_avatar(current_user.id, file)
     user = auth_service.update_user_avatar_url(db, current_user.id, public_url)
     return UserResponse.model_validate(user)
@@ -259,7 +283,7 @@ def get_avatar_image(user_id: int):
     return Response(
         content=data,
         media_type=content_type,
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={"Cache-Control": CACHE_CONTROL_SHORT},
     )
 
 

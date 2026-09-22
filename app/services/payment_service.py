@@ -96,8 +96,13 @@ def list_user_purchases(db: Session, user_id: int, limit: int = 20) -> list[Rech
     )
 
 
-def get_purchase_by_reference(db: Session, reference: str) -> RechargePurchase | None:
-    return db.query(RechargePurchase).filter(RechargePurchase.reference == reference).first()
+def get_purchase_by_reference(
+    db: Session, reference: str, *, for_update: bool = False,
+) -> RechargePurchase | None:
+    query = db.query(RechargePurchase).filter(RechargePurchase.reference == reference)
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
 
 
 def _map_wompi_status(wompi_status: str) -> str:
@@ -134,7 +139,13 @@ def process_transaction_update(db: Session, transaction: dict) -> RechargePurcha
     if not reference:
         return None
 
-    purchase = get_purchase_by_reference(db, reference)
+    # FOR UPDATE: Wompi puede reintentar la entrega del webhook si no recibe
+    # 200 a tiempo. Dos entregas casi simultáneas para la misma referencia no
+    # deben poder leer ambas "pending" antes de que la primera confirme —
+    # eso acreditaría el saldo dos veces. La segunda espera a que la primera
+    # haga commit y entonces lee el estado ya "approved" (_apply_approved_purchase
+    # es idempotente sobre ese estado).
+    purchase = get_purchase_by_reference(db, reference, for_update=True)
     if not purchase:
         return None
 

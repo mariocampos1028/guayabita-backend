@@ -8,9 +8,7 @@ from dotenv import load_dotenv
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.database import engine
-from app.db import models_db  # noqa: F401 — necesario para que Base conozca los modelos
-from app.db.database import Base
-from app.db.migrations import run_startup_migrations
+from app.db import models_db  # noqa: F401 — registra los modelos en Base.metadata
 from app.middleware.maintenance import MaintenanceMiddleware
 from app.middleware.observability import ObservabilityMiddleware
 from app.observability.metrics import metrics
@@ -35,9 +33,10 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Crea las tablas en PostgreSQL si no existen
-Base.metadata.create_all(bind=engine)
-run_startup_migrations()
+# El esquema lo aplica el Pre-deploy Command de Railway ejecutando
+# run_startup_migrations() una sola vez por despliegue. Hacerlo aquí lo repetiría
+# en cada worker al arrancar, y varios procesos creando el mismo índice a la vez
+# se pisan entre sí.
 
 app = FastAPI(title="Guayabita API", version="2.0.0")
 

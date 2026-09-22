@@ -18,6 +18,7 @@ from app.services.image_processing import (
     validate_upload,
 )
 from app.services.r2_storage_service import (
+    CACHE_CONTROL_SHORT,
     get_r2_storage_service,
     tournament_object_key,
     tournament_public_url,
@@ -535,7 +536,7 @@ def upload_tournament_image(db: Session, tournament_id: int, file: UploadFile) -
     try:
         if storage.object_exists(key):
             storage.delete_object(key)
-        storage.upload_object(key, webp_bytes, OUTPUT_CONTENT_TYPE)
+        storage.upload_object(key, webp_bytes, OUTPUT_CONTENT_TYPE, cache_control=CACHE_CONTROL_SHORT)
     except Exception as exc:
         logger.exception("Error al subir imagen de torneo %s", tournament_id)
         raise HTTPException(status_code=500, detail="Error al subir la imagen") from exc

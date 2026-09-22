@@ -6,7 +6,7 @@ from app.db.database import get_db
 from app.db.models_db import User
 from app.dependencies import get_current_user, get_current_verified_user, ensure_email_verified
 from app.models import CreateRoomRequest, RoomResponse, RoomSummary, GameState
-from app.services import room_service, auth_service
+from app.services import room_service, auth_service, rate_limit_service
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
@@ -45,6 +45,13 @@ def create_room(
     current_user: User = Depends(get_current_verified_user),
 ):
     _ensure_player_user(current_user)
+    rate_limit_service.check_rate_limit(
+        "create_room",
+        str(current_user.id),
+        max_requests=10,
+        window_seconds=60,
+        message="Estás creando salas muy rápido. Espera un momento e intenta de nuevo.",
+    )
     min_balance = req.case_value * 2
     if current_user.balance < min_balance:
         raise HTTPException(

@@ -7,6 +7,7 @@ from app.dependencies import get_current_admin, get_current_user
 from app.db.models_db import User
 from app.models import TournamentResponse, TournamentUpdateRequest, TournamentContributeRequest, TournamentBalanceResponse
 from app.services import response_cache_service, tournament_service
+from app.services.r2_storage_service import CACHE_CONTROL_SHORT
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 DISPLAY_TOURNAMENT_CACHE_KEY = "cache:tournament:display:v1"
@@ -134,5 +135,5 @@ def get_tournament_image(tournament_id: int):
     return Response(
         content=data,
         media_type=content_type,
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={"Cache-Control": CACHE_CONTROL_SHORT},
     )

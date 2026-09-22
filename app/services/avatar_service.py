@@ -13,6 +13,7 @@ from app.services.image_processing import (
     validate_upload,
 )
 from app.services.r2_storage_service import (
+    CACHE_CONTROL_SHORT,
     avatar_object_key,
     avatar_public_url,
     get_r2_storage_service,
@@ -34,7 +35,7 @@ def upload_user_avatar(user_id: int, file: UploadFile) -> str:
     try:
         if storage.object_exists(key):
             storage.delete_object(key)
-        storage.upload_object(key, webp_bytes, OUTPUT_CONTENT_TYPE)
+        storage.upload_object(key, webp_bytes, OUTPUT_CONTENT_TYPE, cache_control=CACHE_CONTROL_SHORT)
     except Exception as exc:
         logger.exception("Error al subir avatar a R2 para usuario %s", user_id)
         raise HTTPException(status_code=500, detail="Error al subir la imagen") from exc
