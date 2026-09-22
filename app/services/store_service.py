@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, UploadFile
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models_db import (
@@ -101,6 +101,39 @@ def list_products(db: Session, *, include_inactive: bool = False) -> list[StoreP
         desc(StoreProduct.is_popular),
         StoreProduct.created_at.desc(),
     ).all()
+
+
+def list_products_page(
+    db: Session,
+    *,
+    page: int,
+    page_size: int,
+    include_inactive: bool = False,
+    search: str | None = None,
+    category: str | None = None,
+    popular: bool | None = None,
+    price_sort: str | None = None,
+) -> tuple[list[StoreProduct], int]:
+    query = db.query(StoreProduct).options(joinedload(StoreProduct.media))
+    if not include_inactive:
+        query = query.filter(StoreProduct.status == "active")
+    if search and search.strip():
+        pattern = f"%{search.strip()}%"
+        query = query.filter(or_(StoreProduct.name.ilike(pattern), StoreProduct.product_code.ilike(pattern)))
+    if category:
+        query = query.filter(StoreProduct.category == category)
+    if popular is True:
+        query = query.filter(StoreProduct.is_popular.is_(True))
+
+    total = query.order_by(None).count()
+    if price_sort == "asc":
+        ordering = (StoreProduct.price.asc(), StoreProduct.id.asc())
+    elif price_sort == "desc":
+        ordering = (StoreProduct.price.desc(), StoreProduct.id.desc())
+    else:
+        ordering = (desc(StoreProduct.is_popular), StoreProduct.created_at.desc())
+    items = query.order_by(*ordering).offset((page - 1) * page_size).limit(page_size).all()
+    return items, total
 
 
 def get_product(db: Session, product_id: int, *, allow_inactive: bool = False) -> StoreProduct:
@@ -422,6 +455,13 @@ def list_user_orders(db: Session, user_id: int) -> list[StoreOrder]:
     )
 
 
+def list_user_orders_page(db: Session, user_id: int, *, page: int, page_size: int) -> tuple[list[StoreOrder], int]:
+    query = db.query(StoreOrder).filter(StoreOrder.user_id == user_id)
+    total = query.count()
+    items = query.order_by(StoreOrder.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return items, total
+
+
 def get_user_order_receipt(db: Session, order_id: int, user_id: int) -> tuple[str, StoreOrder]:
     order = _get_user_order(db, order_id, user_id)
     if not order.payment_receipt_key:
@@ -489,6 +529,26 @@ def submit_order_correction(
 
 def list_all_orders(db: Session) -> list[StoreOrder]:
     return db.query(StoreOrder).order_by(StoreOrder.created_at.desc()).all()
+
+
+def list_all_orders_page(
+    db: Session,
+    *,
+    page: int,
+    page_size: int,
+    status: str | None = None,
+    status_group: str | None = None,
+) -> tuple[list[StoreOrder], int]:
+    query = db.query(StoreOrder)
+    if status:
+        query = query.filter(StoreOrder.status == status)
+    if status_group == "closed":
+        query = query.filter(StoreOrder.status.in_(CLOSED_ORDER_STATUSES))
+    elif status_group == "open":
+        query = query.filter(StoreOrder.status.notin_(CLOSED_ORDER_STATUSES))
+    total = query.count()
+    items = query.order_by(StoreOrder.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return items, total
 
 
 def update_order_status(

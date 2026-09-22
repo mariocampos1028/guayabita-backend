@@ -6,9 +6,11 @@ from app.db.database import get_db
 from app.dependencies import get_current_admin, get_current_user
 from app.db.models_db import User
 from app.models import TournamentResponse, TournamentUpdateRequest, TournamentContributeRequest, TournamentBalanceResponse
-from app.services import tournament_service
+from app.services import response_cache_service, tournament_service
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
+DISPLAY_TOURNAMENT_CACHE_KEY = "cache:tournament:display:v1"
+DISPLAY_TOURNAMENT_CACHE_TTL = 20
 
 
 def _to_response(tournament) -> TournamentResponse:
@@ -40,6 +42,7 @@ def relaunch_tournament(
     db: Session = Depends(get_db),
 ):
     tournament = tournament_service.relaunch_tournament(db, tournament_id, admin.id)
+    response_cache_service.invalidate(DISPLAY_TOURNAMENT_CACHE_KEY)
     return _to_response(tournament)
 
 
@@ -49,10 +52,16 @@ def get_current_tournament(
     db: Session = Depends(get_db),
 ):
     _ = current_user
+    cached = response_cache_service.get_json(DISPLAY_TOURNAMENT_CACHE_KEY)
+    if cached is not response_cache_service.CACHE_MISS:
+        return cached
     tournament = tournament_service.get_display_tournament(db)
     if not tournament:
+        response_cache_service.set_json(DISPLAY_TOURNAMENT_CACHE_KEY, None, DISPLAY_TOURNAMENT_CACHE_TTL)
         return None
-    return _to_response(tournament)
+    response = _to_response(tournament).model_dump(mode="json")
+    response_cache_service.set_json(DISPLAY_TOURNAMENT_CACHE_KEY, response, DISPLAY_TOURNAMENT_CACHE_TTL)
+    return response
 
 
 @router.post("/contribute", response_model=TournamentBalanceResponse)
@@ -89,6 +98,7 @@ def save_current_tournament(
         ends_at=req.ends_at,
         is_active=req.is_active,
     )
+    response_cache_service.invalidate(DISPLAY_TOURNAMENT_CACHE_KEY)
     return _to_response(tournament)
 
 
@@ -102,6 +112,7 @@ def upload_tournament_image(
     tournament = tournament_service.get_tournament_for_save(db, tournament_id, admin.id)
     tournament_service.upload_tournament_image(db, tournament.id, file)
     db.refresh(tournament)
+    response_cache_service.invalidate(DISPLAY_TOURNAMENT_CACHE_KEY)
     return _to_response(tournament)
 
 

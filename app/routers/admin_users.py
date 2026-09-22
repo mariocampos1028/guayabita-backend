@@ -7,22 +7,27 @@ from app.dependencies import get_current_admin
 from app.models import (
     AdminBalanceAdjustmentRequest,
     AdminBalanceAdjustmentResponse,
-    BalanceAdjustmentLogDetailResponse,
+    BalanceAdjustmentLogPageResponse,
+    BalanceAdjustmentLogResponse,
     UserResponse,
+    UserSearchPageResponse,
 )
 from app.services import admin_users_service
 
 router = APIRouter(prefix="/admin/users", tags=["admin-users"])
 
 
-@router.get("/search", response_model=list[UserResponse])
+@router.get("/search", response_model=UserSearchPageResponse)
 def search_users(
     q: str = Query(..., min_length=2, max_length=120),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     _ = admin
-    return admin_users_service.search_users(db, q)
+    items, total = admin_users_service.search_users_page(db, q, page=page, page_size=page_size)
+    return {"items": items, "page": page, "page_size": page_size, "total": total}
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -55,12 +60,17 @@ def adjust_balance(
     )
 
 
-@router.get("/{user_id}/balance-logs", response_model=list[BalanceAdjustmentLogDetailResponse])
+@router.get("/{user_id}/balance-logs", response_model=BalanceAdjustmentLogPageResponse)
 def user_balance_logs(
     user_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     _ = admin
     admin_users_service.get_user_by_id(db, user_id)
-    return admin_users_service.list_balance_logs(db, user_id=user_id)
+    items, total = admin_users_service.list_balance_logs_page(
+        db, user_id=user_id, page=page, page_size=page_size,
+    )
+    return {"items": items, "page": page, "page_size": page_size, "total": total}

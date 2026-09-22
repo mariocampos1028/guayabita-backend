@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, aliased, joinedload
 
 from app.db.models_db import BalanceAdjustmentLog, User
 from app.models import BalanceAdjustmentLogDetailResponse
@@ -15,24 +15,26 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def search_users(db: Session, query: str, limit: int = 20) -> list[User]:
+def search_users_page(db: Session, query: str, *, page: int = 1, page_size: int = 20) -> tuple[list[User], int]:
     term = query.strip()
     if len(term) < 2:
         raise HTTPException(status_code=400, detail="Ingresa al menos 2 caracteres para buscar")
 
     pattern = f"%{term}%"
-    return (
-        db.query(User)
-        .filter(
-            (User.username.ilike(pattern))
-            | (User.email.ilike(pattern))
-            | (User.first_name.ilike(pattern))
-            | (User.last_name.ilike(pattern))
-        )
-        .order_by(User.username.asc())
-        .limit(limit)
+    filtered = db.query(User).filter(
+        (User.username.ilike(pattern))
+        | (User.email.ilike(pattern))
+        | (User.first_name.ilike(pattern))
+        | (User.last_name.ilike(pattern))
+    )
+    total = filtered.order_by(None).count()
+    items = (
+        filtered.order_by(User.username.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
     )
+    return items, total
 
 
 def get_user_by_id(db: Session, user_id: int) -> User:
@@ -115,20 +117,43 @@ def _serialize_balance_log(log: BalanceAdjustmentLog) -> BalanceAdjustmentLogDet
     )
 
 
-def list_balance_logs(
+def list_balance_logs_page(
     db: Session,
     user_id: int | None = None,
-    limit: int = 200,
-) -> list[BalanceAdjustmentLogDetailResponse]:
-    query = (
-        db.query(BalanceAdjustmentLog)
-        .options(
+    *,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[BalanceAdjustmentLogDetailResponse], int]:
+    query = db.query(BalanceAdjustmentLog)
+    if user_id is not None:
+        query = query.filter(BalanceAdjustmentLog.user_id == user_id)
+
+    term = (q or "").strip()
+    if term:
+        subject = aliased(User)
+        admin_user = aliased(User)
+        pattern = f"%{term}%"
+        query = (
+            query.join(subject, BalanceAdjustmentLog.user_id == subject.id)
+            .join(admin_user, BalanceAdjustmentLog.admin_id == admin_user.id)
+            .filter(
+                subject.username.ilike(pattern)
+                | subject.first_name.ilike(pattern)
+                | subject.last_name.ilike(pattern)
+                | admin_user.username.ilike(pattern)
+            )
+        )
+
+    total = query.order_by(None).count()
+    logs = (
+        query.options(
             joinedload(BalanceAdjustmentLog.user),
             joinedload(BalanceAdjustmentLog.admin),
         )
         .order_by(BalanceAdjustmentLog.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
     )
-    if user_id is not None:
-        query = query.filter(BalanceAdjustmentLog.user_id == user_id)
-    logs = query.limit(limit).all()
-    return [_serialize_balance_log(log) for log in logs]
+    return [_serialize_balance_log(log) for log in logs], total

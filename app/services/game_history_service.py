@@ -17,18 +17,15 @@ def _day_bounds(day: date) -> tuple[datetime, datetime]:
     return start, end
 
 
-def list_histories(
+def list_histories_page(
     db: Session,
     *,
     room_code: str | None = None,
     on_date: date | None = None,
-    limit: int = 100,
-) -> list[GameHistory]:
-    query = (
-        db.query(GameHistory)
-        .options(joinedload(GameHistory.winner))
-        .order_by(GameHistory.finished_at.desc())
-    )
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[GameHistory], int]:
+    query = db.query(GameHistory)
 
     if room_code:
         code = room_code.strip().upper()
@@ -39,7 +36,15 @@ def list_histories(
         start, end = _day_bounds(on_date)
         query = query.filter(GameHistory.finished_at >= start, GameHistory.finished_at <= end)
 
-    return query.limit(min(limit, 200)).all()
+    total = query.order_by(None).count()
+    items = (
+        query.options(joinedload(GameHistory.winner))
+        .order_by(GameHistory.finished_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return items, total
 
 
 def get_history_detail(db: Session, history_id: int) -> GameHistory:

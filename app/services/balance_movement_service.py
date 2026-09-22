@@ -84,12 +84,15 @@ def apply_balance_change(
     return user
 
 
-def list_user_movements(db: Session, user_id: int, *, limit: int = 200) -> list[BalanceMovement]:
-    safe_limit = max(1, min(limit, 500))
-    return (
-        db.query(BalanceMovement)
-        .filter(BalanceMovement.user_id == user_id)
-        .order_by(BalanceMovement.created_at.desc(), BalanceMovement.id.desc())
-        .limit(safe_limit)
+def list_user_movements_page(
+    db: Session, user_id: int, *, page: int = 1, page_size: int = 50,
+) -> tuple[list[BalanceMovement], int]:
+    query = db.query(BalanceMovement).filter(BalanceMovement.user_id == user_id)
+    total = query.order_by(None).count()
+    items = (
+        query.order_by(BalanceMovement.created_at.desc(), BalanceMovement.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
     )
+    return items, total

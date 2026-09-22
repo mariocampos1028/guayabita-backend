@@ -21,6 +21,10 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     balance: Mapped[float] = mapped_column(Float, default=5000.0, nullable=False)
     tournament_balance: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    # Contadores del torneo en curso: se incrementan al cerrar cada partida y se
+    # reinician al activar un torneo. Evitan recorrer game_history para rankear.
+    tournament_games_played: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tournament_games_won: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
@@ -184,6 +188,8 @@ class StoreProduct(Base):
     allow_cash_on_delivery: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_direct_payment: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False, index=True)
+    discount_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    urgency_text: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
@@ -414,3 +420,75 @@ class SupportMessage(Base):
 
     ticket = relationship("SupportTicket", back_populates="messages")
     sender = relationship("User", foreign_keys=[sender_id])
+
+
+# ── Publicidad ────────────────────────────────────────────────────────────────
+
+class AdvertisementBanner(Base):
+    """Imagen promocional almacenada en Cloudflare R2."""
+    __tablename__ = "advertisement_banners"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
+    public_url: Mapped[str] = mapped_column(String(700), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(50), nullable=False, default="image/webp")
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    advertisements = relationship("Advertisement", back_populates="banner")
+
+
+class Advertisement(Base):
+    """Regla de publicidad: qué banner mostrar, a quién y cuándo."""
+    __tablename__ = "advertisements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    banner_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("advertisement_banners.id"), nullable=False, index=True
+    )
+    balance_threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    frequency: Mapped[str] = mapped_column(String(30), nullable=False, default="once_per_session")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    created_by_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True
+    )
+
+    banner = relationship("AdvertisementBanner", back_populates="advertisements")
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    sections = relationship(
+        "AdvertisementSection",
+        back_populates="advertisement",
+        cascade="all, delete-orphan",
+    )
+
+
+class AdvertisementSection(Base):
+    """Secciones donde aparece una publicidad (relación N:M via tabla de join)."""
+    __tablename__ = "advertisement_sections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    advertisement_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("advertisements.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    section: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+
+    advertisement = relationship("Advertisement", back_populates="sections")

@@ -20,6 +20,7 @@ from app.models import (
     UsernameAvailabilityResponse,
 )
 from app.services import auth_service
+from app.services import response_cache_service
 from app.services import room_service
 from app.services import tournament_service
 from app.services.avatar_service import upload_user_avatar, delete_user_avatar, get_user_avatar_bytes
@@ -262,6 +263,10 @@ def get_avatar_image(user_id: int):
     )
 
 
+LEADERBOARD_CACHE_KEY = "cache:leaderboard:v1"
+LEADERBOARD_CACHE_TTL = 20
+
+
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])
 def leaderboard(
     current_user: User = Depends(get_current_user),
@@ -269,8 +274,13 @@ def leaderboard(
 ):
     """Devuelve, como máximo, los 50 jugadores del ranking del torneo activo."""
     _ = current_user
+    cached = response_cache_service.get_json(LEADERBOARD_CACHE_KEY)
+    if cached is not response_cache_service.CACHE_MISS:
+        return cached
     users = tournament_service.get_ranked_tournament_players(db, limit=50)
-    return [LeaderboardEntry.model_validate(user) for user in users]
+    data = [LeaderboardEntry.model_validate(u).model_dump(mode="json") for u in users]
+    response_cache_service.set_json(LEADERBOARD_CACHE_KEY, data, LEADERBOARD_CACHE_TTL)
+    return data
 
 
 @router.get("/session", response_model=SessionResponse)

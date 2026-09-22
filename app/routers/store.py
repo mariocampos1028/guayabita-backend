@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,7 @@ from app.models import (
     StoreGuayabitsRewardTierRequest,
     StoreGuayabitsRewardTierResponse,
     StoreOrderResponse,
+    StoreOrderPageResponse,
     StoreOrderShippingUpdateRequest,
     StoreOrderStatusUpdateRequest,
     StorePaymentMethodRequest,
@@ -18,13 +19,20 @@ from app.models import (
     StoreProductCreateRequest,
     StoreProductMediaResponse,
     StoreProductResponse,
+    StoreProductPageResponse,
+    StoreProductAdminPageResponse,
     StoreProductUpdateRequest,
 )
 from app.config.store_categories import STORE_CATEGORIES
 from app.services import guayabits_tier_service, store_service
+from app.services import response_cache_service
 from app.services.store_media_service import get_store_object
 
 router = APIRouter(tags=["store"])
+
+PUBLIC_PRODUCTS_CACHE_KEY = "cache:store:products:active:v1"
+PUBLIC_PAYMENT_METHODS_CACHE_KEY = "cache:store:payment-methods:active:v1"
+PUBLIC_STORE_CACHE_TTL = 60
 
 
 @router.get("/store/categories", response_model=list[str])
@@ -41,7 +49,31 @@ def products(
     db: Session = Depends(get_db),
 ):
     _ = current_user
-    return store_service.list_products(db)
+    cached = response_cache_service.get_json(PUBLIC_PRODUCTS_CACHE_KEY)
+    if cached is not response_cache_service.CACHE_MISS:
+        return cached
+    items = [StoreProductResponse.model_validate(item).model_dump(mode="json") for item in store_service.list_products(db)]
+    response_cache_service.set_json(PUBLIC_PRODUCTS_CACHE_KEY, items, PUBLIC_STORE_CACHE_TTL)
+    return items
+
+
+@router.get("/store/products/page", response_model=StoreProductPageResponse)
+def products_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    search: str | None = Query(default=None, max_length=160),
+    category: str | None = Query(default=None, max_length=80),
+    popular: bool | None = Query(default=None),
+    price_sort: str | None = Query(default=None, pattern="^(asc|desc)?$"),
+    current_user: User = Depends(get_current_non_admin),
+    db: Session = Depends(get_db),
+):
+    _ = current_user
+    items, total = store_service.list_products_page(
+        db, page=page, page_size=page_size, search=search, category=category,
+        popular=popular, price_sort=price_sort,
+    )
+    return {"items": items, "page": page, "page_size": page_size, "total": total}
 
 
 @router.get("/store/products/{product_id}", response_model=StoreProductResponse)
@@ -60,7 +92,12 @@ def payment_methods(
     db: Session = Depends(get_db),
 ):
     _ = current_user
-    return store_service.list_payment_methods(db)
+    cached = response_cache_service.get_json(PUBLIC_PAYMENT_METHODS_CACHE_KEY)
+    if cached is not response_cache_service.CACHE_MISS:
+        return cached
+    items = [StorePaymentMethodResponse.model_validate(item).model_dump(mode="json") for item in store_service.list_payment_methods(db)]
+    response_cache_service.set_json(PUBLIC_PAYMENT_METHODS_CACHE_KEY, items, PUBLIC_STORE_CACHE_TTL)
+    return items
 
 
 @router.post("/store/orders", response_model=StoreOrderResponse, status_code=201)
@@ -98,6 +135,17 @@ def my_orders(
     db: Session = Depends(get_db),
 ):
     return store_service.list_user_orders(db, current_user.id)
+
+
+@router.get("/store/orders/me/page", response_model=StoreOrderPageResponse)
+def my_orders_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_non_admin),
+    db: Session = Depends(get_db),
+):
+    items, total = store_service.list_user_orders_page(db, current_user.id, page=page, page_size=page_size)
+    return {"items": items, "page": page, "page_size": page_size, "total": total}
 
 
 @router.put("/store/orders/{order_id}/shipping", response_model=StoreOrderResponse)
@@ -228,13 +276,33 @@ def admin_products(
     return store_service.list_products(db, include_inactive=True)
 
 
+@router.get("/admin/store/products/page", response_model=StoreProductAdminPageResponse)
+def admin_products_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    search: str | None = Query(default=None, max_length=160),
+    popular: bool | None = Query(default=None),
+    price_sort: str | None = Query(default=None, pattern="^(asc|desc)?$"),
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    _ = admin
+    items, total = store_service.list_products_page(
+        db, page=page, page_size=page_size, include_inactive=True,
+        search=search, popular=popular, price_sort=price_sort,
+    )
+    return {"items": items, "page": page, "page_size": page_size, "total": total}
+
+
 @router.post("/admin/store/products", response_model=StoreProductAdminResponse, status_code=201)
 def create_product(
     payload: StoreProductCreateRequest,
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    return store_service.create_product(db, payload, admin.id)
+    product = store_service.create_product(db, payload, admin.id)
+    response_cache_service.invalidate(PUBLIC_PRODUCTS_CACHE_KEY)
+    return product
 
 
 @router.put("/admin/store/products/{product_id}", response_model=StoreProductAdminResponse)
@@ -244,7 +312,9 @@ def update_product(
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    return store_service.update_product(db, product_id, payload, admin.id)
+    product = store_service.update_product(db, product_id, payload, admin.id)
+    response_cache_service.invalidate(PUBLIC_PRODUCTS_CACHE_KEY)
+    return product
 
 
 @router.delete("/admin/store/products/{product_id}", response_model=StoreProductAdminResponse)
@@ -253,7 +323,9 @@ def archive_product(
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    return store_service.archive_product(db, product_id, admin.id)
+    product = store_service.archive_product(db, product_id, admin.id)
+    response_cache_service.invalidate(PUBLIC_PRODUCTS_CACHE_KEY)
+    return product
 
 
 @router.post("/admin/store/products/{product_id}/activate", response_model=StoreProductAdminResponse)
@@ -262,7 +334,9 @@ def activate_product(
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    return store_service.activate_product(db, product_id, admin.id)
+    product = store_service.activate_product(db, product_id, admin.id)
+    response_cache_service.invalidate(PUBLIC_PRODUCTS_CACHE_KEY)
+    return product
 
 
 @router.delete("/admin/store/products/{product_id}/permanent", status_code=204)
@@ -273,6 +347,7 @@ def delete_product(
 ):
     _ = admin
     store_service.delete_product(db, product_id)
+    response_cache_service.invalidate(PUBLIC_PRODUCTS_CACHE_KEY)
     return Response(status_code=204)
 
 
@@ -290,9 +365,11 @@ def add_media(
     db: Session = Depends(get_db),
 ):
     _ = admin
-    return store_service.add_product_media(
+    media = store_service.add_product_media(
         db, product_id, file, sort_order, is_primary=is_primary
     )
+    response_cache_service.invalidate(PUBLIC_PRODUCTS_CACHE_KEY)
+    return media
 
 
 @router.post(
@@ -310,13 +387,15 @@ def add_media_batch(
 ):
     _ = admin
     primary = primary_index if primary_index >= 0 else None
-    return store_service.add_product_media_batch(
+    media = store_service.add_product_media_batch(
         db,
         product_id,
         files,
         primary_index=primary,
         start_sort_order=start_sort_order,
     )
+    response_cache_service.invalidate(PUBLIC_PRODUCTS_CACHE_KEY)
+    return media
 
 
 @router.patch(
@@ -330,7 +409,9 @@ def set_primary_media(
     db: Session = Depends(get_db),
 ):
     _ = admin
-    return store_service.set_primary_media(db, product_id, media_id)
+    media = store_service.set_primary_media(db, product_id, media_id)
+    response_cache_service.invalidate(PUBLIC_PRODUCTS_CACHE_KEY)
+    return media
 
 
 @router.delete("/admin/store/products/{product_id}/media/{media_id}", status_code=204)
@@ -342,6 +423,7 @@ def delete_media(
 ):
     _ = admin
     store_service.delete_product_media(db, product_id, media_id)
+    response_cache_service.invalidate(PUBLIC_PRODUCTS_CACHE_KEY)
     return Response(status_code=204)
 
 
@@ -367,7 +449,9 @@ def create_payment_method(
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    return store_service.save_payment_method(db, payload, admin.id)
+    method = store_service.save_payment_method(db, payload, admin.id)
+    response_cache_service.invalidate(PUBLIC_PAYMENT_METHODS_CACHE_KEY)
+    return method
 
 
 @router.put(
@@ -380,7 +464,9 @@ def update_payment_method(
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    return store_service.save_payment_method(db, payload, admin.id, method_id)
+    method = store_service.save_payment_method(db, payload, admin.id, method_id)
+    response_cache_service.invalidate(PUBLIC_PAYMENT_METHODS_CACHE_KEY)
+    return method
 
 
 @router.get("/admin/store/orders", response_model=list[StoreOrderResponse])
@@ -390,6 +476,22 @@ def admin_orders(
 ):
     _ = admin
     return store_service.list_all_orders(db)
+
+
+@router.get("/admin/store/orders/page", response_model=StoreOrderPageResponse)
+def admin_orders_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    status: str | None = Query(default=None, max_length=30),
+    status_group: str | None = Query(default=None, pattern="^(open|closed)$"),
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    _ = admin
+    items, total = store_service.list_all_orders_page(
+        db, page=page, page_size=page_size, status=status, status_group=status_group,
+    )
+    return {"items": items, "page": page, "page_size": page_size, "total": total}
 
 
 @router.get("/admin/store/orders/{order_id}/receipt")

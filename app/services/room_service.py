@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from upstash_redis import Redis
+from app.observability.redis import InstrumentedRedis
 from app.models import GameState, TurnState, Player
 from app.game_logic import start_game as logic_start_game, _empty_turn
 from app.services import game_audit_service, auth_service
@@ -18,11 +19,13 @@ ROOM_TTL = 60 * 60 * 24  # 24 horas en segundos
 USER_ROOM_TTL = 60 * 60 * 24
 WAIT_TIMEOUT_SECONDS = 300
 MAX_PLAYERS = 10
+WAITING_ROOMS_KEY = "rooms:waiting"
+WAITING_ROOMS_INDEX_READY_KEY = "rooms:waiting:index:v1"
 
-redis = Redis(
+redis = InstrumentedRedis(Redis(
     url=os.getenv("UPSTASH_REDIS_REST_URL", ""),
     token=os.getenv("UPSTASH_REDIS_REST_TOKEN", ""),
-)
+))
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -32,6 +35,39 @@ def _room_key(code: str) -> str:
 
 def _user_room_key(user_id: int) -> str:
     return f"user_room:{user_id}"
+
+
+def _sync_waiting_room_index(room: dict) -> None:
+    """Mantiene el índice de salas disponibles sin escanear todas las claves."""
+    code = room["code"]
+    if room.get("status") == "waiting" and len(room.get("players", [])) < MAX_PLAYERS:
+        redis.sadd(WAITING_ROOMS_KEY, code)
+    else:
+        redis.srem(WAITING_ROOMS_KEY, code)
+
+
+def _initialize_waiting_room_index() -> None:
+    """Importa salas preexistentes solo una vez al desplegar el índice.
+
+    Después de esta transición, las rutas de usuario no vuelven a ejecutar
+    ``KEYS``: cada mutación mantiene el índice incrementalmente.
+    """
+    try:
+        should_rebuild = redis.set(WAITING_ROOMS_INDEX_READY_KEY, "1", nx=True)
+    except Exception:
+        return
+    if not should_rebuild:
+        return
+
+    try:
+        keys = redis.keys("room:*")
+        for key in keys:
+            raw = redis.get(key)
+            if raw:
+                _sync_waiting_room_index(json.loads(raw))
+    except Exception:
+        # El índice se autorrepara con las mutaciones posteriores; no bloquea el lobby.
+        return
 
 def _generate_code() -> str:
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
@@ -73,6 +109,7 @@ def _expire_waiting_room_if_needed(code: str, room: dict) -> None:
     for player in room.get("players", []):
         redis.delete(_user_room_key(player["user_id"]))
     redis.delete(_room_key(code))
+    redis.srem(WAITING_ROOMS_KEY, code)
     raise HTTPException(
         status_code=410,
         detail="La sala expiró: se superaron los 5 minutos de espera sin iniciar la partida.",
@@ -99,6 +136,7 @@ def create_room(creator_id: int, creator_username: str, case_value: float) -> di
         "game_state": None,
     }
     redis.set(_room_key(code), json.dumps(room_data), ex=ROOM_TTL)
+    _sync_waiting_room_index(room_data)
     # Asocia el usuario a esta sala
     redis.set(_user_room_key(creator_id), code, ex=USER_ROOM_TTL)
     return room_data
@@ -122,6 +160,7 @@ def join_room(code: str, user_id: int, username: str) -> dict:
     room["players"].append({"user_id": user_id, "username": username, "ready": True})
     _sync_wait_timer(room)
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
+    _sync_waiting_room_index(room)
     redis.set(_user_room_key(user_id), code, ex=USER_ROOM_TTL)
     return room
 
@@ -191,6 +230,7 @@ def start_room(code: str, user_id: int, balances: dict[int, float], db: Session)
         )
     ]
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
+    _sync_waiting_room_index(room)
     return state
 
 
@@ -207,6 +247,7 @@ def save_game_state(code: str, state: GameState) -> None:
     if state.status == "finished":
         room["status"] = "finished"
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
+    _sync_waiting_room_index(room)
 
 
 def mark_result_persisted(code: str) -> None:
@@ -281,6 +322,7 @@ def cancel_room(code: str, user_id: int) -> None:
 
     # Borra la sala
     redis.delete(_room_key(code))
+    redis.srem(WAITING_ROOMS_KEY, code)
 
 
 def leave_room(code: str, user_id: int) -> None:
@@ -297,6 +339,7 @@ def leave_room(code: str, user_id: int) -> None:
     room["players"] = [p for p in room["players"] if p["user_id"] != user_id]
     _sync_wait_timer(room)
     redis.set(_room_key(code), json.dumps(room), ex=ROOM_TTL)
+    _sync_waiting_room_index(room)
 
     # Desvincula al jugador de la sala
     redis.delete(_user_room_key(user_id))
@@ -305,6 +348,7 @@ def leave_room(code: str, user_id: int) -> None:
 def delete_room(code: str) -> None:
     """Elimina la llave de la sala en Redis inmediatamente."""
     redis.delete(_room_key(code))
+    redis.srem(WAITING_ROOMS_KEY, code)
 
 
 def expire_room(code: str, ttl_seconds: int) -> None:
@@ -326,22 +370,29 @@ def get_player_user_id(code: str, player_index: int) -> int | None:
 def list_waiting_rooms(current_user_id: int) -> list[dict]:
     """Lista salas en espera a las que el usuario aún no pertenece."""
     open_rooms: list[dict] = []
+    _initialize_waiting_room_index()
     try:
-        keys = redis.keys("room:*")
+        codes = redis.smembers(WAITING_ROOMS_KEY)
     except Exception:
         return []
 
-    if not keys:
+    if not codes:
         return []
 
-    for key in keys:
-        code = key.split(":", 1)[-1]
-        raw = redis.get(_room_key(code))
+    codes = sorted(str(code) for code in codes)
+    try:
+        rooms_data = redis.mget(*[_room_key(code) for code in codes])
+    except Exception:
+        return []
+
+    for code, raw in zip(codes, rooms_data):
         if not raw:
+            redis.srem(WAITING_ROOMS_KEY, code)
             continue
 
         room = json.loads(raw)
-        if room.get("status") != "waiting":
+        if room.get("status") != "waiting" or len(room.get("players", [])) >= MAX_PLAYERS:
+            redis.srem(WAITING_ROOMS_KEY, code)
             continue
         if len(room["players"]) >= MAX_PLAYERS:
             continue

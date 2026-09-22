@@ -7,9 +7,11 @@ from app.db.database import get_db
 from app.db.models_db import User
 from app.dependencies import get_current_admin
 from app.models import (
-    BalanceAdjustmentLogDetailResponse,
+    BalanceAdjustmentLogPageResponse,
     GameHistoryDetail,
+    GameHistoryPageResponse,
     GameHistorySummary,
+    StoreOrderAuditEventPageResponse,
     StoreOrderAuditEventResponse,
 )
 from app.services import admin_users_service, game_history_service, store_service
@@ -31,40 +33,57 @@ def _to_summary(history) -> GameHistorySummary:
     )
 
 
-@router.get("", response_model=list[GameHistorySummary])
+@router.get("", response_model=GameHistoryPageResponse)
 def list_audit_records(
     room_code: str | None = Query(default=None, max_length=10),
     date: date | None = Query(default=None, description="Fecha de finalización (YYYY-MM-DD)"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     _ = admin
-    histories = game_history_service.list_histories(
+    histories, total = game_history_service.list_histories_page(
         db,
         room_code=room_code,
         on_date=date,
+        page=page,
+        page_size=page_size,
     )
-    return [_to_summary(h) for h in histories]
+    return {
+        "items": [_to_summary(h) for h in histories],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
 
 
-@router.get("/system/balance", response_model=list[BalanceAdjustmentLogDetailResponse])
+@router.get("/system/balance", response_model=BalanceAdjustmentLogPageResponse)
 def list_balance_audit(
     user_id: int | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=120),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     _ = admin
-    return admin_users_service.list_balance_logs(db, user_id=user_id)
+    items, total = admin_users_service.list_balance_logs_page(
+        db, user_id=user_id, q=q, page=page, page_size=page_size,
+    )
+    return {"items": items, "page": page, "page_size": page_size, "total": total}
 
 
-@router.get("/events/orders", response_model=list[StoreOrderAuditEventResponse])
+@router.get("/events/orders", response_model=StoreOrderAuditEventPageResponse)
 def list_store_order_events(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     _ = admin
-    orders = store_service.list_all_orders(db)
-    return [
+    orders, total = store_service.list_all_orders_page(db, page=page, page_size=page_size)
+    items = [
         StoreOrderAuditEventResponse(
             id=order.id,
             reference=order.reference,
@@ -76,6 +95,7 @@ def list_store_order_events(
         )
         for order in orders
     ]
+    return {"items": items, "page": page, "page_size": page_size, "total": total}
 
 
 @router.get("/{history_id}", response_model=GameHistoryDetail)

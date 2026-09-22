@@ -10,6 +10,43 @@ from app.db.database import engine
 def run_startup_migrations() -> None:
     """Apply idempotent ALTER TABLE statements for existing databases."""
     statements = [
+        # ── Tablas base (antes creadas por Base.metadata.create_all) ─────────────
+        # Deben ir primero: las sentencias ALTER TABLE siguientes asumen que
+        # 'users' y 'game_history' ya existen en una base de datos nueva.
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(50) NOT NULL UNIQUE,
+            email VARCHAR(120) NOT NULL UNIQUE,
+            password_hash VARCHAR(255) NOT NULL,
+            first_name VARCHAR(80) NOT NULL DEFAULT '',
+            last_name VARCHAR(80) NOT NULL DEFAULT '',
+            phone VARCHAR(30) NOT NULL DEFAULT '',
+            address VARCHAR(255) NOT NULL DEFAULT '',
+            birth_date DATE,
+            avatar_url VARCHAR(500),
+            id_document VARCHAR(20),
+            is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+            balance DOUBLE PRECISION NOT NULL DEFAULT 5000,
+            tournament_balance DOUBLE PRECISION NOT NULL DEFAULT 0,
+            email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+            email_verified_at TIMESTAMPTZ,
+            last_login_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            referral_link_generations INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS game_history (
+            id SERIAL PRIMARY KEY,
+            room_code VARCHAR(10) NOT NULL,
+            winner_id INTEGER REFERENCES users(id),
+            players_json TEXT NOT NULL,
+            audit_log TEXT,
+            finished_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_game_history_room_code ON game_history(room_code)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(80) NOT NULL DEFAULT ''",
@@ -288,6 +325,60 @@ def run_startup_migrations() -> None:
         "CREATE INDEX IF NOT EXISTS ix_balance_movements_created_at ON balance_movements(created_at)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS id_document VARCHAR(20)",
         "CREATE INDEX IF NOT EXISTS ix_users_id_document ON users(id_document)",
+        # ── Publicidad ────────────────────────────────────────────────────────
+        """
+        CREATE TABLE IF NOT EXISTS advertisement_banners (
+            id SERIAL PRIMARY KEY,
+            original_name VARCHAR(255) NOT NULL,
+            object_key VARCHAR(500) NOT NULL UNIQUE,
+            public_url VARCHAR(700) NOT NULL,
+            mime_type VARCHAR(50) NOT NULL DEFAULT 'image/webp',
+            file_size INTEGER NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_adv_banners_object_key ON advertisement_banners(object_key)",
+        """
+        CREATE TABLE IF NOT EXISTS advertisements (
+            id SERIAL PRIMARY KEY,
+            banner_id INTEGER NOT NULL REFERENCES advertisement_banners(id),
+            balance_threshold DOUBLE PRECISION NOT NULL,
+            frequency VARCHAR(30) NOT NULL DEFAULT 'once_per_session',
+            is_active BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_by_id INTEGER REFERENCES users(id)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_advertisements_is_active ON advertisements(is_active)",
+        "CREATE INDEX IF NOT EXISTS ix_advertisements_banner_id ON advertisements(banner_id)",
+        """
+        CREATE TABLE IF NOT EXISTS advertisement_sections (
+            id SERIAL PRIMARY KEY,
+            advertisement_id INTEGER NOT NULL REFERENCES advertisements(id) ON DELETE CASCADE,
+            section VARCHAR(30) NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_adv_sections_advertisement_id ON advertisement_sections(advertisement_id)",
+        "CREATE INDEX IF NOT EXISTS ix_adv_sections_section ON advertisement_sections(section)",
+        # ── Descuento y urgencia en productos de tienda ───────────────────────────
+        "ALTER TABLE store_products ADD COLUMN IF NOT EXISTS discount_percent DOUBLE PRECISION",
+        "ALTER TABLE store_products ADD COLUMN IF NOT EXISTS urgency_text VARCHAR(120)",
+        # ── Índices para listados paginados ─────────────────────────────────────
+        "CREATE INDEX IF NOT EXISTS ix_store_products_public_list ON store_products(status, is_popular DESC, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_store_orders_user_created ON store_orders(user_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_store_orders_status_created ON store_orders(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_game_history_finished_at ON game_history(finished_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_balance_movements_user_created ON balance_movements(user_id, created_at DESC)",
+        # ── Fase 2: contadores incrementales del ranking de torneo ──────────────
+        # Sustituyen el recorrido completo de game_history en cada cálculo del
+        # ranking. Ver scripts/backfill_tournament_counters.py para poblarlos
+        # con el historial ya existente.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS tournament_games_played INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS tournament_games_won INTEGER NOT NULL DEFAULT 0",
+        # ── Fase 2: paginación de auditoría de saldo y ranking de torneo ─────────
+        "CREATE INDEX IF NOT EXISTS ix_balance_adjustment_logs_user_created ON balance_adjustment_logs(user_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_users_tournament_balance_active ON users(tournament_balance) WHERE tournament_balance > 0",
     ]
     with engine.begin() as conn:
         for sql in statements:

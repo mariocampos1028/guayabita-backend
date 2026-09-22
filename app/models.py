@@ -457,6 +457,22 @@ class StoreProductBase(BaseModel):
     allow_cash_on_delivery: bool = True
     allow_direct_payment: bool = True
     status: StoreProductStatus = "active"
+    discount_percent: float | None = Field(default=None, ge=0, le=100)
+    urgency_text: str | None = Field(default=None, max_length=120)
+
+    @field_validator("discount_percent")
+    @classmethod
+    def validate_discount(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError("El porcentaje de descuento debe ser mayor a 0")
+        return v
+
+    @field_validator("urgency_text")
+    @classmethod
+    def validate_urgency(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("El texto de urgencia no puede estar vacío")
+        return v.strip() if v else None
 
     @field_validator("allow_direct_payment")
     @classmethod
@@ -483,6 +499,8 @@ class StoreProductResponse(StoreProductBase):
     media: list[StoreProductMediaResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+    discount_percent: float | None = None
+    urgency_text: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -543,6 +561,36 @@ class StoreOrderResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PageMeta(BaseModel):
+    page: int
+    page_size: int
+    total: int
+
+
+class StoreProductPageResponse(PageMeta):
+    items: list[StoreProductResponse]
+
+
+class StoreProductAdminPageResponse(PageMeta):
+    items: list[StoreProductAdminResponse]
+
+
+class StoreOrderPageResponse(PageMeta):
+    items: list[StoreOrderResponse]
+
+
+class GameHistoryPageResponse(PageMeta):
+    items: list[GameHistorySummary]
+
+
+class BalanceMovementPageResponse(PageMeta):
+    items: list[BalanceMovementResponse]
+
+
+class UserSearchPageResponse(PageMeta):
+    items: list[UserResponse]
+
+
 class StoreOrderShippingUpdateRequest(BaseModel):
     shipping_address: str = Field(..., min_length=5, max_length=255)
     department: str = Field(..., min_length=2, max_length=80)
@@ -583,6 +631,14 @@ class StoreOrderAuditEventResponse(BaseModel):
     status: str
     payment_type: str
     updated_at: datetime
+
+
+class BalanceAdjustmentLogPageResponse(PageMeta):
+    items: list[BalanceAdjustmentLogDetailResponse]
+
+
+class StoreOrderAuditEventPageResponse(PageMeta):
+    items: list[StoreOrderAuditEventResponse]
 
 
 class AdminBalanceAdjustmentResponse(BaseModel):
@@ -696,3 +752,94 @@ class ReferralPromoResponse(BaseModel):
 class UsernameAvailabilityResponse(BaseModel):
     available: bool
     reason: str | None = None
+
+
+# ── Publicidad ────────────────────────────────────────────────────────────────
+
+AdvertisementSection = Literal[
+    "LOBBY",
+    "MARKET",
+    "PREMIOS",
+    "INICIO_PARTIDA",
+    "SALA_ESPERA",
+]
+
+AdvertisementFrequency = Literal[
+    "once_per_session",
+    "once_per_day",
+    "always",
+]
+
+ADVERTISEMENT_SECTIONS: list[str] = [
+    "LOBBY",
+    "MARKET",
+    "PREMIOS",
+    "INICIO_PARTIDA",
+    "SALA_ESPERA",
+]
+
+ADVERTISEMENT_FREQUENCIES: list[str] = [
+    "once_per_session",
+    "once_per_day",
+    "always",
+]
+
+
+class AdvertisementBannerResponse(BaseModel):
+    id: int
+    original_name: str
+    object_key: str
+    public_url: str
+    mime_type: str
+    file_size: int
+    created_at: datetime
+    in_use: bool = False  # True si alguna publicidad activa lo referencia
+
+    model_config = {"from_attributes": True}
+
+
+class AdvertisementCreateRequest(BaseModel):
+    banner_id: int = Field(..., gt=0)
+    balance_threshold: float = Field(..., gt=0)
+    frequency: AdvertisementFrequency = "once_per_session"
+    sections: list[AdvertisementSection] = Field(..., min_length=1)
+
+    @field_validator("sections")
+    @classmethod
+    def sections_unique(cls, v: list) -> list:
+        if len(v) != len(set(v)):
+            raise ValueError("Las secciones no pueden repetirse")
+        return v
+
+
+class AdvertisementSectionResponse(BaseModel):
+    section: str
+
+    model_config = {"from_attributes": True}
+
+
+class AdvertisementResponse(BaseModel):
+    id: int
+    banner_id: int
+    banner: AdvertisementBannerResponse
+    balance_threshold: float
+    frequency: str
+    is_active: bool
+    sections: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class OccupiedSectionsResponse(BaseModel):
+    occupied: list[str]
+
+
+# Motor de publicidad — respuesta para el usuario
+class AdvertisementForUserResponse(BaseModel):
+    id: int
+    banner_public_url: str
+    frequency: str
+    balance_threshold: float
+    section: str

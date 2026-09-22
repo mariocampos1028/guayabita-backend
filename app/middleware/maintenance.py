@@ -5,7 +5,7 @@ from starlette.responses import JSONResponse
 from app.config.maintenance import is_maintenance_mode, maintenance_message
 
 # Rutas que siguen disponibles durante mantenimiento
-_EXEMPT_EXACT = frozenset({"/", "/status", "/docs", "/openapi.json", "/redoc"})
+_EXEMPT_EXACT = frozenset({"/", "/status", "/internal/metrics", "/docs", "/openapi.json", "/redoc"})
 _EXEMPT_PREFIXES = (
     "/payments/wompi/webhook",
     "/payments/wompi/return",

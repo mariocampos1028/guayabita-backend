@@ -7,6 +7,7 @@ from app.dependencies import get_current_verified_user
 from app.models import GameState, PlaceBetRequest
 from app.services import room_service, auth_service
 from app.services import game_audit_service
+from app.services import tournament_service
 import app.game_logic as logic
 
 router = APIRouter(prefix="/game", tags=["game"])
@@ -111,6 +112,11 @@ def _persist_result(code: str, state: GameState, db: Session) -> None:
             ),
         )
         db.add(history)
+        tournament_service.register_finished_game(
+            db,
+            participant_ids=[uid for uid in player_ids if uid],
+            winner_id=winner_db_id,
+        )
         db.commit()
     except Exception:
         db.rollback()

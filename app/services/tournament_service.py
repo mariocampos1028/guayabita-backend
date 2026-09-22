@@ -65,17 +65,22 @@ def _alphabetical_rank_key(username: str) -> str:
     return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
 
 
-def _count_user_game_stats(db: Session, user_ids: set[int]) -> tuple[dict[int, int], dict[int, int]]:
-    """Cuenta partidas jugadas y ganadas, ignorando historiales duplicados."""
+def _count_user_game_stats(
+    db: Session, user_ids: set[int], *, since: datetime | None = None,
+) -> tuple[dict[int, int], dict[int, int]]:
+    """Cuenta partidas jugadas y ganadas dentro del torneo, ignorando historiales duplicados."""
     games_played = {user_id: 0 for user_id in user_ids}
     games_won = {user_id: 0 for user_id in user_ids}
     seen_games: set[tuple] = set()
 
-    histories = db.query(
+    query = db.query(
         GameHistory.room_code,
         GameHistory.winner_id,
         GameHistory.players_json,
-    ).all()
+    )
+    if since is not None:
+        query = query.filter(GameHistory.finished_at >= since)
+    histories = query.all()
 
     for history in histories:
         fingerprint = (history.room_code, history.winner_id, history.players_json)
@@ -103,6 +108,72 @@ def _count_user_game_stats(db: Session, user_ids: set[int]) -> tuple[dict[int, i
     return games_played, games_won
 
 
+def register_finished_game(
+    db: Session, *, participant_ids: list[int], winner_id: int | None,
+) -> None:
+    """Suma la partida a los contadores del torneo de cada participante.
+
+    Se llama al persistir el resultado, dentro de la misma transacción, para que
+    el ranking no tenga que recorrer ``game_history``. El incremento se hace en
+    SQL (``columna + 1``) y no leyendo-escribiendo en Python, para que dos
+    partidas que terminan a la vez no se pisen.
+    """
+    unique_ids = {uid for uid in participant_ids if uid}
+    if unique_ids:
+        db.query(User).filter(User.id.in_(unique_ids)).update(
+            {User.tournament_games_played: User.tournament_games_played + 1},
+            synchronize_session=False,
+        )
+    if winner_id:
+        db.query(User).filter(User.id == winner_id).update(
+            {User.tournament_games_won: User.tournament_games_won + 1},
+            synchronize_session=False,
+        )
+
+
+def backfill_tournament_counters(db: Session) -> tuple[int, int]:
+    """Recalcula los contadores a partir del historial ya existente.
+
+    Se usa una sola vez, al desplegar las columnas nuevas, para que el ranking
+    del torneo en curso no cambie: sin esto todos arrancarían en cero. Reutiliza
+    el mismo conteo que hacía el ranking antes, así que el resultado es idéntico
+    al del código anterior. Es idempotente.
+
+    Devuelve (usuarios actualizados, participaciones contadas).
+    """
+    users = db.query(User).all()
+    if not users:
+        return 0, 0
+
+    active = get_active_tournament(db)
+    since = active.started_at if active else None
+    games_played, games_won = _count_user_game_stats(db, {u.id for u in users}, since=since)
+
+    updated = 0
+    for user in users:
+        played = games_played.get(user.id, 0)
+        won = games_won.get(user.id, 0)
+        if user.tournament_games_played != played or user.tournament_games_won != won:
+            user.tournament_games_played = played
+            user.tournament_games_won = won
+            updated += 1
+
+    db.commit()
+    return updated, sum(games_played.values())
+
+
+def reset_tournament_counters(db: Session) -> None:
+    """Pone a cero los contadores al activar un torneo.
+
+    Equivale al filtro ``finished_at >= started_at`` que antes se aplicaba al
+    historial: a partir de aquí solo cuentan las partidas del torneo nuevo.
+    """
+    db.query(User).update(
+        {User.tournament_games_played: 0, User.tournament_games_won: 0},
+        synchronize_session=False,
+    )
+
+
 def get_ranked_tournament_players(db: Session, limit: int | None = None) -> list[User]:
     """Ordena el ranking con los desempates oficiales del torneo.
 
@@ -110,6 +181,9 @@ def get_ranked_tournament_players(db: Session, limit: int | None = None) -> list
     2. Más partidas jugadas.
     3. Más partidas ganadas.
     4. Orden alfabético del usuario.
+
+    Los conteos salen de los contadores incrementales de ``users``; el orden
+    alfabético se resuelve en Python porque ignora tildes y mayúsculas.
     """
     users = (
         db.query(User)
@@ -119,15 +193,12 @@ def get_ranked_tournament_players(db: Session, limit: int | None = None) -> list
     if not users:
         return []
 
-    user_ids = {user.id for user in users}
-    games_played, games_won = _count_user_game_stats(db, user_ids)
-
     ranked = sorted(
         users,
         key=lambda user: (
             -user.tournament_balance,
-            -games_played[user.id],
-            -games_won[user.id],
+            -user.tournament_games_played,
+            -user.tournament_games_won,
             _alphabetical_rank_key(user.username),
             user.id,
         ),
@@ -429,6 +500,7 @@ def save_tournament(
             current.winner_avatar_url = None
             current.winner_balance = None
             current.winner_prize_title = None
+            reset_tournament_counters(db)
         else:
             current.is_active = True
             current.status = "active"
