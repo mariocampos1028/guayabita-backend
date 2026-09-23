@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.db.models_db import StoreOrder, User
 from app.dependencies import get_current_admin, get_current_non_admin
+from app.emails import (
+    send_order_created_admin_email,
+    send_order_created_email,
+    send_order_status_changed_email,
+)
 from app.models import (
     GuayabitsRewardCalculationResponse,
     StoreGuayabitsRewardTierRequest,
@@ -36,21 +41,69 @@ PUBLIC_PRODUCTS_CACHE_KEY = "cache:store:products:active:v1"
 PUBLIC_PAYMENT_METHODS_CACHE_KEY = "cache:store:payment-methods:active:v1"
 PUBLIC_STORE_CACHE_TTL = 60
 
+# Motivo de devolución/rechazo visible en el correo al comprador únicamente
+# para estos estados — en el resto, admin_observations es una nota interna.
+_STATUS_REASON_VISIBLE = {"devuelto_correccion", "rechazado"}
+
+
+def _dispatch_order_created_emails(
+    customer_email: str,
+    customer_first_name: str,
+    reference: str,
+    product_name: str,
+    product_price: float,
+    payment_type: str,
+    status: str,
+    order_id: int,
+) -> None:
+    status_label = store_service.ORDER_STATUS_LABELS_ES.get(status, status)
+    send_order_created_email(
+        to=customer_email,
+        username=customer_first_name,
+        reference=reference,
+        product_name=product_name,
+        product_price=product_price,
+        payment_type=payment_type,
+        status_label=status_label,
+    )
+    customer_name = customer_first_name
+    send_order_created_admin_email(
+        customer_name=customer_name,
+        customer_email=customer_email,
+        reference=reference,
+        product_name=product_name,
+        product_price=product_price,
+        payment_type_label=store_service.PAYMENT_TYPE_LABELS_ES.get(payment_type, payment_type),
+        status_label=status_label,
+        order_id=order_id,
+    )
+
+
+def _dispatch_order_status_changed_email(
+    customer_email: str,
+    customer_first_name: str,
+    reference: str,
+    product_name: str,
+    status: str,
+    reason: str | None,
+) -> None:
+    send_order_status_changed_email(
+        to=customer_email,
+        username=customer_first_name,
+        reference=reference,
+        product_name=product_name,
+        status_label=store_service.ORDER_STATUS_LABELS_ES.get(status, status),
+        reason=reason if status in _STATUS_REASON_VISIBLE else None,
+    )
+
 
 @router.get("/store/categories", response_model=list[str])
-def product_categories(
-    current_user: User = Depends(get_current_non_admin),
-):
-    _ = current_user
+def product_categories():
     return list(STORE_CATEGORIES)
 
 
 @router.get("/store/products", response_model=list[StoreProductResponse])
-def products(
-    current_user: User = Depends(get_current_non_admin),
-    db: Session = Depends(get_db),
-):
-    _ = current_user
+def products(db: Session = Depends(get_db)):
     cached = response_cache_service.get_json(PUBLIC_PRODUCTS_CACHE_KEY)
     if cached is not response_cache_service.CACHE_MISS:
         return cached
@@ -61,16 +114,25 @@ def products(
 
 @router.get("/store/products/page", response_model=StoreProductPageResponse)
 def products_page(
+    request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     search: str | None = Query(default=None, max_length=160),
     category: str | None = Query(default=None, max_length=80),
     popular: bool | None = Query(default=None),
     price_sort: str | None = Query(default=None, pattern="^(asc|desc)?$"),
-    current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
-    _ = current_user
+    # Endpoint público (sin login): limitado por IP para que nadie sin cuenta
+    # pueda golpear en serie la búsqueda por descripción, la consulta más
+    # pesada del catálogo (ver Fase 4 — rate_limit_service).
+    rate_limit_service.check_rate_limit(
+        "store_products_page",
+        rate_limit_service.client_ip(request),
+        max_requests=60,
+        window_seconds=60,
+        message="Demasiadas solicitudes al catálogo. Intenta de nuevo en un momento.",
+    )
     items, total = store_service.list_products_page(
         db, page=page, page_size=page_size, search=search, category=category,
         popular=popular, price_sort=price_sort,
@@ -79,12 +141,7 @@ def products_page(
 
 
 @router.get("/store/products/{product_id}", response_model=StoreProductResponse)
-def product_detail(
-    product_id: int,
-    current_user: User = Depends(get_current_non_admin),
-    db: Session = Depends(get_db),
-):
-    _ = current_user
+def product_detail(product_id: int, db: Session = Depends(get_db)):
     return store_service.get_product(db, product_id)
 
 
@@ -104,6 +161,7 @@ def payment_methods(
 
 @router.post("/store/orders", response_model=StoreOrderResponse, status_code=201)
 def create_order(
+    background_tasks: BackgroundTasks,
     product_id: int = Form(...),
     payment_type: str = Form(...),
     shipping_address: str = Form(..., min_length=5, max_length=255),
@@ -123,7 +181,7 @@ def create_order(
         window_seconds=60,
         message="Demasiados pedidos en poco tiempo. Espera un momento.",
     )
-    return store_service.create_order(
+    order = store_service.create_order(
         db,
         current_user,
         product_id=product_id,
@@ -136,6 +194,18 @@ def create_order(
         customer_notes=customer_notes,
         receipt=receipt,
     )
+    background_tasks.add_task(
+        _dispatch_order_created_emails,
+        order.customer_email,
+        order.customer_first_name,
+        order.reference,
+        order.product_name,
+        order.product_price,
+        order.payment_type,
+        order.status,
+        order.id,
+    )
+    return order
 
 
 @router.get("/store/orders/me", response_model=list[StoreOrderResponse])
@@ -518,12 +588,37 @@ def order_receipt(
     return Response(data, media_type=content_type, headers={"Cache-Control": CACHE_CONTROL_PRIVATE})
 
 
-@router.patch("/admin/store/orders/{order_id}/status", response_model=StoreOrderResponse)
-def update_status(
+@router.get("/admin/store/orders/{order_id}", response_model=StoreOrderResponse)
+def admin_order_detail(
     order_id: int,
-    payload: StoreOrderStatusUpdateRequest,
     admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     _ = admin
-    return store_service.update_order_status(db, order_id, payload)
+    return store_service.get_order(db, order_id)
+
+
+@router.patch("/admin/store/orders/{order_id}/status", response_model=StoreOrderResponse)
+def update_status(
+    order_id: int,
+    payload: StoreOrderStatusUpdateRequest,
+    background_tasks: BackgroundTasks,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    _ = admin
+    previous_status = store_service.get_order(db, order_id).status
+    order = store_service.update_order_status(db, order_id, payload)
+    if order.status != previous_status:
+        # admin_observations solo viaja como "motivo" al comprador en estados
+        # de devolución/rechazo; en el resto es una nota interna del admin.
+        background_tasks.add_task(
+            _dispatch_order_status_changed_email,
+            order.customer_email,
+            order.customer_first_name,
+            order.reference,
+            order.product_name,
+            order.status,
+            order.admin_observations,
+        )
+    return order

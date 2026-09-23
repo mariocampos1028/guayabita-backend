@@ -96,3 +96,119 @@ def send_password_changed_email(*, to: str, username: str) -> bool:
         subject="Tu contraseña de Guayabita fue actualizada",
         html=html,
     )
+
+
+def _send_admin_email(*, subject: str, html: str) -> bool:
+    """Send a notification to the configured admin inbox, if any."""
+    if not email_settings.has_admin_email:
+        logger.warning("Admin notification not sent — ADMIN_NOTIFICATION_EMAIL is not configured")
+        return False
+    return _send_html_email(to=email_settings.admin_email, subject=subject, html=html)
+
+
+def send_order_created_email(
+    *,
+    to: str,
+    username: str,
+    reference: str,
+    product_name: str,
+    product_price: float,
+    payment_type: str,
+    status_label: str,
+) -> bool:
+    """Notify the buyer that their order was received."""
+    html = render_template(
+        "order_created.html",
+        username=username,
+        reference=reference,
+        product_name=product_name,
+        product_price=f"{product_price:,.0f}",
+        payment_type=payment_type,
+        status_label=status_label,
+        orders_url=f"{email_settings.frontend_url}/compras",
+    )
+    return _send_html_email(
+        to=to,
+        subject=f"Recibimos tu pedido — {reference}",
+        html=html,
+    )
+
+
+def send_order_created_admin_email(
+    *,
+    customer_name: str,
+    customer_email: str,
+    reference: str,
+    product_name: str,
+    product_price: float,
+    payment_type_label: str,
+    status_label: str,
+    order_id: int,
+) -> bool:
+    """Notify the admin inbox that a new order came in."""
+    html = render_template(
+        "order_created_admin.html",
+        customer_name=customer_name,
+        customer_email=customer_email,
+        reference=reference,
+        product_name=product_name,
+        product_price=f"{product_price:,.0f}",
+        payment_type_label=payment_type_label,
+        status_label=status_label,
+        manage_url=f"{email_settings.frontend_url}/admin/tienda?pedido={order_id}",
+    )
+    return _send_admin_email(
+        subject=f"Nueva compra — {reference}",
+        html=html,
+    )
+
+
+def send_order_status_changed_email(
+    *,
+    to: str,
+    username: str,
+    reference: str,
+    product_name: str,
+    status_label: str,
+    reason: str | None = None,
+) -> bool:
+    """Notify the buyer that their order's status changed."""
+    html = render_template(
+        "order_status_changed.html",
+        username=username,
+        reference=reference,
+        product_name=product_name,
+        status_label=status_label,
+        reason=reason,
+        orders_url=f"{email_settings.frontend_url}/compras",
+    )
+    return _send_html_email(
+        to=to,
+        subject=f"Tu pedido {reference} ahora está: {status_label}",
+        html=html,
+    )
+
+
+def send_support_ticket_created_admin_email(
+    *,
+    username: str,
+    customer_email: str,
+    category_label: str,
+    title: str,
+    detail: str,
+    ticket_id: int,
+) -> bool:
+    """Notify the admin inbox that a user submitted a support request."""
+    html = render_template(
+        "support_ticket_created_admin.html",
+        username=username,
+        customer_email=customer_email,
+        category_label=category_label,
+        title=title,
+        detail=detail,
+        manage_url=f"{email_settings.frontend_url}/admin/soportes?ticket={ticket_id}",
+    )
+    return _send_admin_email(
+        subject=f"Nueva solicitud de soporte — {title}",
+        html=html,
+    )

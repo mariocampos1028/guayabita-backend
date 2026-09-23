@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}Actualización de tu pedido — Guayabita{% endblock %}
+
+{% block content %}
+  <h1 style="margin:0 0 12px;font-size:22px;color:#fbbf24;">Tu pedido cambió de estado</h1>
+  <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:rgba(255,255,255,0.8);">
+    Hola {{ username }}, tu pedido de <strong style="color:#4ade80;">{{ product_name }}</strong>
+    ({{ reference }}) ahora está:
+  </p>
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 20px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.25);border-radius:10px;">
+    <tr>
+      <td style="padding:16px 20px;text-align:center;">
+        <p style="margin:0;font-size:20px;font-weight:800;color:#4ade80;">{{ status_label }}</p>
+      </td>
+    </tr>
+  </table>
+
+  {% if reason %}
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 20px;background-color:#3f1f0f;border:1px solid #d97706;border-radius:10px;">
+    <tr>
+      <td style="padding:16px 20px;">
+        <p style="margin:0 0 6px;font-size:12px;color:#fdba74;text-transform:uppercase;letter-spacing:0.08em;">Motivo</p>
+        <p style="margin:0;font-size:14px;line-height:1.5;color:#ffedd5;">{{ reason }}</p>
+      </td>
+    </tr>
+  </table>
+  {% endif %}
+
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto;">
+    <tr>
+      <td align="center" bgcolor="#d97706" style="border-radius:10px;background-color:#d97706;">
+        <a href="{{ orders_url }}" target="_blank" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:700;line-height:1.2;color:#ffffff;text-decoration:none;background-color:#d97706;border-radius:10px;">
+          Ver mi pedido
+        </a>
+      </td>
+    </tr>
+  </table>
+{% endblock %}

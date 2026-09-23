@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.database import get_db
 from app.db.models_db import SupportMessage, SupportTicket, User
 from app.dependencies import get_current_admin, get_current_user
+from app.emails import send_support_ticket_created_admin_email
 from app.models import (
     SupportMessageCreateRequest,
     SupportTicketCreateRequest,
@@ -13,6 +14,31 @@ from app.models import (
 )
 
 router = APIRouter(tags=["support"])
+
+SUPPORT_CATEGORY_LABELS_ES = {
+    "solicitud": "Solicitud",
+    "peticion": "Petición",
+    "felicitacion": "Felicitación",
+    "sugerencia": "Sugerencia",
+}
+
+
+def _dispatch_support_ticket_created_email(
+    username: str,
+    customer_email: str,
+    category: str,
+    title: str,
+    detail: str,
+    ticket_id: int,
+) -> None:
+    send_support_ticket_created_admin_email(
+        username=username,
+        customer_email=customer_email,
+        category_label=SUPPORT_CATEGORY_LABELS_ES.get(category, category),
+        title=title,
+        detail=detail,
+        ticket_id=ticket_id,
+    )
 
 
 def _ticket_response(ticket: SupportTicket) -> SupportTicketResponse:
@@ -36,12 +62,26 @@ def _get_ticket(db: Session, ticket_id: int) -> SupportTicket:
 
 
 @router.post("/support/tickets", response_model=SupportTicketResponse, status_code=201)
-def create_ticket(payload: SupportTicketCreateRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_ticket(
+    payload: SupportTicketCreateRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     ticket = SupportTicket(user_id=user.id, category=payload.category, title=payload.title.strip())
     db.add(ticket)
     db.flush()
     db.add(SupportMessage(ticket_id=ticket.id, sender_id=user.id, sender_role="user", content=payload.detail.strip()))
     db.commit()
+    background_tasks.add_task(
+        _dispatch_support_ticket_created_email,
+        user.username,
+        user.email,
+        payload.category,
+        payload.title.strip(),
+        payload.detail.strip(),
+        ticket.id,
+    )
     return _ticket_response(_get_ticket(db, ticket.id))
 
 

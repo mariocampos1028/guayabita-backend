@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Recibimos tu pedido — Guayabita{% endblock %}
+
+{% block content %}
+  <h1 style="margin:0 0 12px;font-size:22px;color:#fbbf24;">¡Gracias por tu compra, {{ username }}!</h1>
+  <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:rgba(255,255,255,0.8);">
+    Recibimos tu pedido de <strong style="color:#4ade80;">{{ product_name }}</strong> y ya quedó registrado.
+  </p>
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 20px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.25);border-radius:10px;">
+    <tr>
+      <td style="padding:16px 20px;">
+        <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.08em;">Referencia</p>
+        <p style="margin:0 0 12px;font-size:16px;font-weight:800;color:#f8fafc;">{{ reference }}</p>
+        <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.08em;">Valor</p>
+        <p style="margin:0 0 12px;font-size:16px;font-weight:800;color:#4ade80;">${{ product_price }} COP</p>
+        <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.08em;">Estado actual</p>
+        <p style="margin:0;font-size:16px;font-weight:800;color:#f8fafc;">{{ status_label }}</p>
+      </td>
+    </tr>
+  </table>
+
+  <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:rgba(255,255,255,0.7);">
+    {% if payment_type == 'directo' %}
+      Estamos validando tu comprobante de pago. Te avisaremos por correo en cuanto haya novedades.
+    {% else %}
+      Tu pedido quedó en proceso para alistamiento y entrega contraentrega. Te avisaremos por correo en cada cambio de estado.
+    {% endif %}
+  </p>
+
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto;">
+    <tr>
+      <td align="center" bgcolor="#d97706" style="border-radius:10px;background-color:#d97706;">
+        <a href="{{ orders_url }}" target="_blank" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:700;line-height:1.2;color:#ffffff;text-decoration:none;background-color:#d97706;border-radius:10px;">
+          Ver mi pedido
+        </a>
+      </td>
+    </tr>
+  </table>
+{% endblock %}

@@ -11,6 +11,7 @@ class EmailSettings:
     frontend_url: str
     verify_token_ttl_hours: int
     password_reset_token_ttl_minutes: int
+    admin_email: str
 
     @property
     def is_configured(self) -> bool:
@@ -19,6 +20,10 @@ class EmailSettings:
     @property
     def uses_dev_sender(self) -> bool:
         return "@resend.dev" in self.from_address
+
+    @property
+    def has_admin_email(self) -> bool:
+        return bool(self.admin_email)
 
 
 def _load_email_settings() -> EmailSettings:
@@ -31,6 +36,7 @@ def _load_email_settings() -> EmailSettings:
         password_reset_token_ttl_minutes=int(
             os.getenv("PASSWORD_RESET_TOKEN_TTL_MINUTES", "30")
         ),
+        admin_email=os.getenv("ADMIN_NOTIFICATION_EMAIL", "").strip(),
     )
 
 

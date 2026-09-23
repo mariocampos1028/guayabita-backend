@@ -41,6 +41,21 @@ ORDER_STATUSES = {
     "devuelto_correccion",
 }
 
+# Etiquetas en español para los correos de notificación (ver email_service).
+ORDER_STATUS_LABELS_ES = {
+    "en_validacion": "En validación",
+    "en_proceso": "En proceso",
+    "en_alistamiento": "En alistamiento",
+    "en_reparto": "En reparto",
+    "entregado": "Entregado",
+    "rechazado": "Rechazado",
+    "devuelto_correccion": "Devuelto / corrección",
+}
+PAYMENT_TYPE_LABELS_ES = {
+    "contraentrega": "Pago contraentrega",
+    "directo": "Pago directo",
+}
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -89,6 +104,14 @@ def _get_user_order(db: Session, order_id: int, user_id: int) -> StoreOrder:
         .filter(StoreOrder.id == order_id, StoreOrder.user_id == user_id)
         .first()
     )
+    if not order:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    return order
+
+
+def get_order(db: Session, order_id: int) -> StoreOrder:
+    """Obtiene un pedido sin restringir por usuario (uso administrativo)."""
+    order = db.query(StoreOrder).filter(StoreOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
     return order
