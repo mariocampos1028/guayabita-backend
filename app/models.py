@@ -435,19 +435,22 @@ class GuayabitsRewardCalculationResponse(BaseModel):
 
 class StoreProductBase(BaseModel):
     name: str = Field(..., min_length=2, max_length=160)
-    category: str = Field(..., min_length=2, max_length=80)
+    categories: list[str] = Field(..., min_length=1, max_length=20)
 
-    @field_validator("category")
+    @field_validator("categories")
     @classmethod
-    def validate_category(cls, value: str) -> str:
+    def validate_categories(cls, value: list[str]) -> list[str]:
         from app.config.store_categories import STORE_CATEGORIES
 
-        normalized = value.strip()
-        if normalized not in STORE_CATEGORIES:
+        normalized = [v.strip() for v in value]
+        invalid = [v for v in normalized if v not in STORE_CATEGORIES]
+        if invalid:
             raise ValueError(
-                "Categoría inválida. Usa una de: "
+                f"Categoría inválida: {', '.join(invalid)}. Usa una o más de: "
                 + ", ".join(STORE_CATEGORIES)
             )
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("No repitas la misma categoría")
         return normalized
     short_description: str = Field(..., min_length=2, max_length=300)
     description: str = Field(..., min_length=2, max_length=5000)

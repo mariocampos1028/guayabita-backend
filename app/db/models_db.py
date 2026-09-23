@@ -209,6 +209,38 @@ class StoreProduct(Base):
     )
     updated_by = relationship("User", foreign_keys=[updated_by_id])
 
+    # `category` (arriba) es la categoría original, previa a soportar varias por
+    # producto; se mantiene poblada con la primera categoría por compatibilidad,
+    # pero ya no es la fuente de verdad para filtrar ni mostrar. Esa es
+    # `category_links`, la relación N:M real.
+    category_links = relationship(
+        "StoreProductCategory",
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def categories(self) -> list[str]:
+        """Categorías del producto, en el orden canónico de STORE_CATEGORIES."""
+        from app.config.store_categories import STORE_CATEGORIES
+
+        order = {name: i for i, name in enumerate(STORE_CATEGORIES)}
+        names = {link.category for link in self.category_links}
+        return sorted(names, key=lambda c: order.get(c, len(order)))
+
+
+class StoreProductCategory(Base):
+    """Relación N:M: un producto puede pertenecer a varias categorías."""
+    __tablename__ = "store_product_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("store_products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    category: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+
+    product = relationship("StoreProduct", back_populates="category_links")
+
 
 class StoreProductMedia(Base):
     __tablename__ = "store_product_media"

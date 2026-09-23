@@ -11,6 +11,7 @@ from app.db.models_db import (
     StoreOrder,
     StorePaymentMethod,
     StoreProduct,
+    StoreProductCategory,
     StoreProductMedia,
     User,
 )
@@ -94,7 +95,9 @@ def _get_user_order(db: Session, order_id: int, user_id: int) -> StoreOrder:
 
 
 def list_products(db: Session, *, include_inactive: bool = False) -> list[StoreProduct]:
-    query = db.query(StoreProduct).options(joinedload(StoreProduct.media))
+    query = db.query(StoreProduct).options(
+        joinedload(StoreProduct.media), joinedload(StoreProduct.category_links),
+    )
     if not include_inactive:
         query = query.filter(StoreProduct.status == "active")
     return query.order_by(
@@ -114,14 +117,25 @@ def list_products_page(
     popular: bool | None = None,
     price_sort: str | None = None,
 ) -> tuple[list[StoreProduct], int]:
-    query = db.query(StoreProduct).options(joinedload(StoreProduct.media))
+    query = db.query(StoreProduct).options(
+        joinedload(StoreProduct.media), joinedload(StoreProduct.category_links),
+    )
     if not include_inactive:
         query = query.filter(StoreProduct.status == "active")
     if search and search.strip():
         pattern = f"%{search.strip()}%"
-        query = query.filter(or_(StoreProduct.name.ilike(pattern), StoreProduct.product_code.ilike(pattern)))
+        query = query.filter(or_(
+            StoreProduct.name.ilike(pattern),
+            StoreProduct.product_code.ilike(pattern),
+            StoreProduct.short_description.ilike(pattern),
+            StoreProduct.description.ilike(pattern),
+        ))
     if category:
-        query = query.filter(StoreProduct.category == category)
+        query = query.filter(
+            StoreProduct.id.in_(
+                db.query(StoreProductCategory.product_id).filter(StoreProductCategory.category == category)
+            )
+        )
     if popular is True:
         query = query.filter(StoreProduct.is_popular.is_(True))
 
@@ -139,7 +153,7 @@ def list_products_page(
 def get_product(db: Session, product_id: int, *, allow_inactive: bool = False) -> StoreProduct:
     product = (
         db.query(StoreProduct)
-        .options(joinedload(StoreProduct.media))
+        .options(joinedload(StoreProduct.media), joinedload(StoreProduct.category_links))
         .filter(StoreProduct.id == product_id)
         .first()
     )
@@ -148,11 +162,23 @@ def get_product(db: Session, product_id: int, *, allow_inactive: bool = False) -
     return product
 
 
+def _sync_product_categories(db: Session, product_id: int, categories: list[str]) -> None:
+    db.query(StoreProductCategory).filter(StoreProductCategory.product_id == product_id).delete()
+    for category in categories:
+        db.add(StoreProductCategory(product_id=product_id, category=category))
+
+
 def create_product(
     db: Session, payload: StoreProductCreateRequest, admin_id: int
 ) -> StoreProduct:
-    product = StoreProduct(**payload.model_dump(), updated_by_id=admin_id)
+    data = payload.model_dump(exclude={"categories"})
+    # category se mantiene poblada por compatibilidad con lo que aún la lea
+    # directo de la fila; category_links (vía _sync_product_categories) es la
+    # fuente de verdad real para filtrar y mostrar.
+    product = StoreProduct(**data, category=payload.categories[0], updated_by_id=admin_id)
     db.add(product)
+    db.flush()
+    _sync_product_categories(db, product.id, payload.categories)
     db.commit()
     db.refresh(product)
     return get_product(db, product.id, allow_inactive=True)
@@ -162,10 +188,13 @@ def update_product(
     db: Session, product_id: int, payload: StoreProductUpdateRequest, admin_id: int
 ) -> StoreProduct:
     product = get_product(db, product_id, allow_inactive=True)
-    for key, value in payload.model_dump().items():
+    data = payload.model_dump(exclude={"categories"})
+    for key, value in data.items():
         setattr(product, key, value)
+    product.category = payload.categories[0]
     product.updated_by_id = admin_id
     product.updated_at = _now()
+    _sync_product_categories(db, product_id, payload.categories)
     db.commit()
     return get_product(db, product.id, allow_inactive=True)
 

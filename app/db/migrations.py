@@ -370,6 +370,31 @@ def run_startup_migrations() -> None:
         "CREATE INDEX IF NOT EXISTS ix_store_orders_status_created ON store_orders(status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS ix_game_history_finished_at ON game_history(finished_at DESC)",
         "CREATE INDEX IF NOT EXISTS ix_balance_movements_user_created ON balance_movements(user_id, created_at DESC)",
+        # ── Categorías múltiples por producto ────────────────────────────────────
+        # store_products.category se mantiene poblada con la primera categoría
+        # por compatibilidad, pero deja de ser la fuente de verdad: la relación
+        # N:M en store_product_categories es la real desde aquí.
+        """
+        CREATE TABLE IF NOT EXISTS store_product_categories (
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
+            category VARCHAR(80) NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_store_product_categories_product_id ON store_product_categories(product_id)",
+        "CREATE INDEX IF NOT EXISTS ix_store_product_categories_category ON store_product_categories(category)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_store_product_categories_product_category ON store_product_categories(product_id, category)",
+        # Backfill idempotente: solo inserta para productos que aún no tengan
+        # ningún vínculo en la tabla nueva, así no duplica ni pisa asignaciones
+        # de varias categorías hechas después de este despliegue.
+        """
+        INSERT INTO store_product_categories (product_id, category)
+        SELECT sp.id, sp.category
+        FROM store_products sp
+        WHERE NOT EXISTS (
+            SELECT 1 FROM store_product_categories spc WHERE spc.product_id = sp.id
+        )
+        """,
         # ── Fase 2: contadores incrementales del ranking de torneo ──────────────
         # Sustituyen el recorrido completo de game_history en cada cálculo del
         # ranking. Ver scripts/backfill_tournament_counters.py para poblarlos
