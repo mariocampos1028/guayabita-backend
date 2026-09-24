@@ -150,6 +150,11 @@ def register_user(
     birth_date,
     id_document: str,
     referrer_id: int | None = None,
+    utm_source: str | None = None,
+    utm_medium: str | None = None,
+    utm_campaign: str | None = None,
+    utm_term: str | None = None,
+    utm_content: str | None = None,
 ) -> User:
     from app.services.email_validation import validate_registration_email
     from app.services.referral_service import attach_referral_on_register, phone_exists, id_document_exists
@@ -177,6 +182,11 @@ def register_user(
         id_document=id_document,
         avatar_url=DEFAULT_AVATAR_URL,
         last_login_at=datetime.now(timezone.utc),
+        utm_source=utm_source,
+        utm_medium=utm_medium,
+        utm_campaign=utm_campaign,
+        utm_term=utm_term,
+        utm_content=utm_content,
     )
     db.add(user)
     db.commit()

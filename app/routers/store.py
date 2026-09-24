@@ -30,6 +30,7 @@ from app.models import (
 )
 from app.config.store_categories import STORE_CATEGORIES
 from app.services import guayabits_tier_service, store_service
+from app.services import meta_capi_service
 from app.services import rate_limit_service
 from app.services import response_cache_service
 from app.services.r2_storage_service import CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PRIVATE
@@ -94,6 +95,42 @@ def _dispatch_order_status_changed_email(
         product_name=product_name,
         status_label=store_service.ORDER_STATUS_LABELS_ES.get(status, status),
         reason=reason if status in _STATUS_REASON_VISIBLE else None,
+    )
+
+
+def _dispatch_purchase_capi_event(
+    order_reference: str,
+    email: str,
+    phone: str,
+    user_id: int,
+    value: float,
+    product_id: int | None,
+    product_name: str,
+    client_ip: str | None,
+    user_agent: str | None,
+    fbp: str | None,
+    fbc: str | None,
+) -> None:
+    meta_capi_service.send_event(
+        event_name="Purchase",
+        # Misma referencia que ya usó el pixel del navegador para este pedido
+        # (ver tracking.purchase en recharge.ts) — Meta deduplica el que
+        # llega por las dos vías.
+        event_id=order_reference,
+        email=email,
+        phone=phone,
+        external_id=user_id,
+        client_ip=client_ip,
+        user_agent=user_agent,
+        fbp=fbp,
+        fbc=fbc,
+        custom_data={
+            "value": value,
+            "currency": "COP",
+            "content_type": "product",
+            "content_ids": [str(product_id)] if product_id else [],
+            "content_name": product_name,
+        },
     )
 
 
@@ -162,6 +199,7 @@ def payment_methods(
 @router.post("/store/orders", response_model=StoreOrderResponse, status_code=201)
 def create_order(
     background_tasks: BackgroundTasks,
+    request: Request,
     product_id: int = Form(...),
     payment_type: str = Form(...),
     shipping_address: str = Form(..., min_length=5, max_length=255),
@@ -171,6 +209,13 @@ def create_order(
     reference_point: str | None = Form(default=None, max_length=300),
     customer_notes: str | None = Form(default=None, max_length=1000),
     receipt: UploadFile | None = File(default=None),
+    utm_source: str | None = Form(default=None, max_length=120),
+    utm_medium: str | None = Form(default=None, max_length=120),
+    utm_campaign: str | None = Form(default=None, max_length=120),
+    utm_term: str | None = Form(default=None, max_length=120),
+    utm_content: str | None = Form(default=None, max_length=120),
+    fbp: str | None = Form(default=None, max_length=255),
+    fbc: str | None = Form(default=None, max_length=255),
     current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
@@ -193,6 +238,11 @@ def create_order(
         reference_point=reference_point,
         customer_notes=customer_notes,
         receipt=receipt,
+        utm_source=utm_source,
+        utm_medium=utm_medium,
+        utm_campaign=utm_campaign,
+        utm_term=utm_term,
+        utm_content=utm_content,
     )
     background_tasks.add_task(
         _dispatch_order_created_emails,
@@ -204,6 +254,20 @@ def create_order(
         order.payment_type,
         order.status,
         order.id,
+    )
+    background_tasks.add_task(
+        _dispatch_purchase_capi_event,
+        order.reference,
+        order.customer_email,
+        order.customer_phone,
+        current_user.id,
+        order.product_price,
+        order.product_id,
+        order.product_name,
+        rate_limit_service.client_ip(request),
+        request.headers.get("user-agent"),
+        fbp,
+        fbc,
     )
     return order
 

@@ -417,6 +417,11 @@ def create_order(
     reference_point: str | None,
     customer_notes: str | None,
     receipt: UploadFile | None,
+    utm_source: str | None = None,
+    utm_medium: str | None = None,
+    utm_campaign: str | None = None,
+    utm_term: str | None = None,
+    utm_content: str | None = None,
 ) -> StoreOrder:
     if user.is_admin:
         raise HTTPException(
@@ -488,6 +493,11 @@ def create_order(
         payment_method_name=method.display_name if method else "Pago contraentrega",
         payment_receipt_key=receipt_key,
         status=status,
+        utm_source=utm_source,
+        utm_medium=utm_medium,
+        utm_campaign=utm_campaign,
+        utm_term=utm_term,
+        utm_content=utm_content,
     )
     db.add(order)
     db.flush()

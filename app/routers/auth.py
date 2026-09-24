@@ -20,6 +20,7 @@ from app.models import (
     UsernameAvailabilityResponse,
 )
 from app.services import auth_service
+from app.services import meta_capi_service
 from app.services import rate_limit_service
 from app.services import response_cache_service
 from app.services import room_service
@@ -71,6 +72,32 @@ def _dispatch_reset_email(email: str, username: str, reset_token: str) -> None:
         to=email,
         username=username,
         reset_url=_build_reset_url(reset_token),
+    )
+
+
+def _dispatch_registration_capi_event(
+    user_id: int,
+    email: str,
+    phone: str,
+    client_ip: str | None,
+    user_agent: str | None,
+    fbp: str | None,
+    fbc: str | None,
+) -> None:
+    meta_capi_service.send_event(
+        event_name="CompleteRegistration",
+        # Mismo id que usa el pixel del navegador para este mismo registro
+        # (ver tracking.completeRegistration en el frontend) — así Meta
+        # deduplica el que llega por las dos vías.
+        event_id=f"reg-{user_id}",
+        email=email,
+        phone=phone,
+        external_id=user_id,
+        client_ip=client_ip,
+        user_agent=user_agent,
+        fbp=fbp,
+        fbc=fbc,
+        custom_data={"status": True},
     )
 
 
@@ -152,6 +179,11 @@ def register(
         birth_date=req.birth_date,
         id_document=req.id_document,
         referrer_id=req.referrer_id,
+        utm_source=req.utm_source,
+        utm_medium=req.utm_medium,
+        utm_campaign=req.utm_campaign,
+        utm_term=req.utm_term,
+        utm_content=req.utm_content,
     )
     token = auth_service.create_token(user.id)
     auth_service.create_lobby_session(token, user.id, db)
@@ -163,6 +195,16 @@ def register(
         user.username,
         user.balance,
         verify_token,
+    )
+    background_tasks.add_task(
+        _dispatch_registration_capi_event,
+        user.id,
+        user.email,
+        user.phone,
+        rate_limit_service.client_ip(request),
+        request.headers.get("user-agent"),
+        req.fbp,
+        req.fbc,
     )
     return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
 

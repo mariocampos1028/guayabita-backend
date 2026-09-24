@@ -65,6 +65,16 @@ class RegisterRequest(BaseModel):
     birth_date: date
     id_document: str = Field(..., min_length=6, max_length=20)
     referrer_id: int | None = None
+    # Atribución de campaña (Meta Ads). Opcionales: la mayoría de registros no
+    # vienen de un anuncio, y el frontend solo los manda cuando los tiene.
+    utm_source: str | None = Field(default=None, max_length=120)
+    utm_medium: str | None = Field(default=None, max_length=120)
+    utm_campaign: str | None = Field(default=None, max_length=120)
+    utm_term: str | None = Field(default=None, max_length=120)
+    utm_content: str | None = Field(default=None, max_length=120)
+    # Cookies del pixel de Meta (_fbp/_fbc), para la API de Conversiones.
+    fbp: str | None = Field(default=None, max_length=255)
+    fbc: str | None = Field(default=None, max_length=255)
 
     @field_validator("password")
     @classmethod
@@ -127,6 +137,11 @@ class UserResponse(BaseModel):
     id_document: str | None
     is_admin: bool
     last_login_at: datetime | None
+    utm_source: str | None = None
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    utm_term: str | None = None
+    utm_content: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -558,6 +573,11 @@ class StoreOrderResponse(BaseModel):
     status: StoreOrderStatus
     admin_observations: str | None
     guayabits_credited: bool
+    utm_source: str | None = None
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    utm_term: str | None = None
+    utm_content: str | None = None
     created_at: datetime
     updated_at: datetime
 

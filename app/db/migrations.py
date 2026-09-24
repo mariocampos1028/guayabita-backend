@@ -404,6 +404,17 @@ def run_startup_migrations() -> None:
         # ── Fase 2: paginación de auditoría de saldo y ranking de torneo ─────────
         "CREATE INDEX IF NOT EXISTS ix_balance_adjustment_logs_user_created ON balance_adjustment_logs(user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS ix_users_tournament_balance_active ON users(tournament_balance) WHERE tournament_balance > 0",
+        # ── Atribución de campaña (Meta Ads: captura de UTM) ─────────────────────
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_source VARCHAR(120)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_medium VARCHAR(120)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_campaign VARCHAR(120)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_term VARCHAR(120)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS utm_content VARCHAR(120)",
+        "ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS utm_source VARCHAR(120)",
+        "ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS utm_medium VARCHAR(120)",
+        "ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS utm_campaign VARCHAR(120)",
+        "ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS utm_term VARCHAR(120)",
+        "ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS utm_content VARCHAR(120)",
     ]
     with engine.begin() as conn:
         for sql in statements:

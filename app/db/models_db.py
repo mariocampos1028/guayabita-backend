@@ -40,6 +40,14 @@ class User(Base):
         nullable=False,
     )
     referral_link_generations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Atribución de campaña de la visita que terminó en este registro (modelo
+    # "último toque no orgánico" — ver utm.service.ts en el frontend). Se fija
+    # una sola vez, al crear el usuario, y no vuelve a tocarse.
+    utm_source: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    utm_medium: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    utm_campaign: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    utm_term: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    utm_content: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     game_histories = relationship("GameHistory", back_populates="winner", foreign_keys="GameHistory.winner_id")
     referrals_made = relationship(
@@ -312,6 +320,13 @@ class StoreOrder(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="en_proceso", index=True)
     admin_observations: Mapped[str | None] = mapped_column(Text, nullable=True)
     guayabits_credited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Atribución de campaña vigente al momento de este pedido puntual (ver el
+    # mismo campo en User — aquí se fija por cada compra, no solo una vez).
+    utm_source: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    utm_medium: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    utm_campaign: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    utm_term: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    utm_content: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
