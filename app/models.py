@@ -75,6 +75,10 @@ class RegisterRequest(BaseModel):
     # Cookies del pixel de Meta (_fbp/_fbc), para la API de Conversiones.
     fbp: str | None = Field(default=None, max_length=255)
     fbc: str | None = Field(default=None, max_length=255)
+    # Cookie del pixel de TikTok (_ttp), para la API de Conversiones.
+    ttp: str | None = Field(default=None, max_length=255)
+    # Click ID de TikTok Ads (?ttclid=... en la URL), para la API de eventos.
+    ttclid: str | None = Field(default=None, max_length=255)
 
     @field_validator("password")
     @classmethod

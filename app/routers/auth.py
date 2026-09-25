@@ -21,6 +21,7 @@ from app.models import (
 )
 from app.services import auth_service
 from app.services import meta_capi_service
+from app.services import tiktok_events_service
 from app.services import rate_limit_service
 from app.services import response_cache_service
 from app.services import room_service
@@ -98,6 +99,32 @@ def _dispatch_registration_capi_event(
         fbp=fbp,
         fbc=fbc,
         custom_data={"status": True},
+    )
+
+
+def _dispatch_registration_tiktok_event(
+    user_id: int,
+    email: str,
+    phone: str,
+    client_ip: str | None,
+    user_agent: str | None,
+    ttp: str | None,
+    ttclid: str | None,
+) -> None:
+    tiktok_events_service.send_event(
+        event_name="CompleteRegistration",
+        # Mismo id que usa el pixel del navegador para este mismo registro
+        # (ver TiktokPixelAdapter.track en el frontend) — así TikTok deduplica
+        # el que llega por las dos vías.
+        event_id=f"reg-{user_id}",
+        email=email,
+        phone=phone,
+        external_id=user_id,
+        client_ip=client_ip,
+        user_agent=user_agent,
+        ttp=ttp,
+        ttclid=ttclid,
+        custom_data={"description": "registro_guayabita"},
     )
 
 
@@ -205,6 +232,16 @@ def register(
         request.headers.get("user-agent"),
         req.fbp,
         req.fbc,
+    )
+    background_tasks.add_task(
+        _dispatch_registration_tiktok_event,
+        user.id,
+        user.email,
+        user.phone,
+        rate_limit_service.client_ip(request),
+        request.headers.get("user-agent"),
+        req.ttp,
+        req.ttclid,
     )
     return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
 

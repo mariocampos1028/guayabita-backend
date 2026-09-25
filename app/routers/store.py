@@ -31,6 +31,7 @@ from app.models import (
 from app.config.store_categories import STORE_CATEGORIES
 from app.services import guayabits_tier_service, store_service
 from app.services import meta_capi_service
+from app.services import tiktok_events_service
 from app.services import rate_limit_service
 from app.services import response_cache_service
 from app.services.r2_storage_service import CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PRIVATE
@@ -134,6 +135,46 @@ def _dispatch_purchase_capi_event(
     )
 
 
+def _dispatch_purchase_tiktok_event(
+    order_reference: str,
+    email: str,
+    phone: str,
+    user_id: int,
+    value: float,
+    product_id: int | None,
+    product_name: str,
+    client_ip: str | None,
+    user_agent: str | None,
+    ttp: str | None,
+    ttclid: str | None,
+) -> None:
+    tiktok_events_service.send_event(
+        event_name="CompletePayment",
+        # Misma referencia que ya usó el pixel del navegador para este pedido
+        # (ver TiktokPixelAdapter.track en el frontend) — TikTok deduplica el
+        # que llega por las dos vías.
+        event_id=order_reference,
+        email=email,
+        phone=phone,
+        external_id=user_id,
+        client_ip=client_ip,
+        user_agent=user_agent,
+        ttp=ttp,
+        ttclid=ttclid,
+        custom_data={
+            "currency": "COP",
+            "value": value,
+            "contents": [{
+                "content_id": str(product_id) if product_id else "",
+                "content_type": "product",
+                "content_name": product_name,
+                "quantity": 1,
+                "price": value,
+            }],
+        },
+    )
+
+
 @router.get("/store/categories", response_model=list[str])
 def product_categories():
     return list(STORE_CATEGORIES)
@@ -216,6 +257,8 @@ def create_order(
     utm_content: str | None = Form(default=None, max_length=120),
     fbp: str | None = Form(default=None, max_length=255),
     fbc: str | None = Form(default=None, max_length=255),
+    ttp: str | None = Form(default=None, max_length=255),
+    ttclid: str | None = Form(default=None, max_length=255),
     current_user: User = Depends(get_current_non_admin),
     db: Session = Depends(get_db),
 ):
@@ -268,6 +311,20 @@ def create_order(
         request.headers.get("user-agent"),
         fbp,
         fbc,
+    )
+    background_tasks.add_task(
+        _dispatch_purchase_tiktok_event,
+        order.reference,
+        order.customer_email,
+        order.customer_phone,
+        current_user.id,
+        order.product_price,
+        order.product_id,
+        order.product_name,
+        rate_limit_service.client_ip(request),
+        request.headers.get("user-agent"),
+        ttp,
+        ttclid,
     )
     return order
 
